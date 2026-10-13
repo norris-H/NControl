@@ -49,6 +49,14 @@ from .migration import (
 )
 from .security import check_config_paths
 from .updates import UpdateInfo, apply_update, check_for_updates
+from .web_control import (
+    disable as disable_web,
+    enable as enable_web,
+    rotate_token as rotate_web_token,
+    start as start_web,
+    status as web_status,
+    stop as stop_web,
+)
 from .wireguard_control import (
     interface_addresses,
     interface_peer_networks,
@@ -2170,6 +2178,194 @@ class StopConfirmScreen(ModalScreen[str | None]):
         (cancel if confirm.has_focus else confirm).focus()
 
 
+class WebManagerScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "close", "返回"),
+        Binding("r", "refresh", "刷新"),
+    ]
+
+    CSS = """
+    WebManagerScreen {
+        align: center middle;
+        background: $background 80%;
+    }
+
+    WebManagerScreen > Vertical {
+        width: 92%;
+        max-width: 88;
+        height: 92%;
+        max-height: 31;
+        padding: 1 2;
+        border: thick $accent;
+        background: $surface;
+    }
+
+    WebManagerScreen #web-title {
+        height: 2;
+        text-style: bold;
+        color: $accent;
+    }
+
+    WebManagerScreen #web-summary {
+        height: 6;
+        margin-bottom: 1;
+    }
+
+    WebManagerScreen .web-field {
+        height: 5;
+    }
+
+    WebManagerScreen .web-field Label {
+        height: 1;
+        color: $text-muted;
+    }
+
+    WebManagerScreen #web-actions {
+        height: 5;
+        align: left middle;
+    }
+
+    WebManagerScreen #web-actions Button {
+        margin-right: 1;
+    }
+
+    WebManagerScreen #web-message {
+        height: 1fr;
+        border: round $secondary;
+        padding: 1;
+        overflow-y: auto;
+    }
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        self.root_path = root.resolve()
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Web 管理（默认关闭）", id="web-title")
+            yield Static(id="web-summary", markup=True)
+            with Vertical(classes="web-field"):
+                yield Label("监听地址（只允许本机 IPv4；推荐 127.0.0.1 或 WireGuard 地址）")
+                yield Input(id="web-bind")
+            with Vertical(classes="web-field"):
+                yield Label("端口")
+                yield Input(id="web-port", type="integer")
+            with Horizontal(id="web-actions"):
+                yield Button("启用 / 保存", id="web-enable", variant="primary")
+                yield Button("启动", id="web-start", variant="success")
+                yield Button("停止", id="web-stop", variant="warning")
+                yield Button("关闭功能", id="web-disable", variant="error")
+                yield Button("重置令牌", id="web-token")
+            yield Static(
+                "网页不会自动开放公网，也不会随启用动作自动启动。",
+                id="web-message",
+                markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.refresh_view(populate=True)
+        self.query_one("#web-bind", Input).focus()
+
+    def refresh_view(self, *, populate: bool = False, reveal_token: str | None = None) -> None:
+        try:
+            current = web_status(self.root_path)
+        except (HomelabError, OSError) as exc:
+            self.query_one("#web-summary", Static).update(
+                f"[red]读取失败：{escape(str(exc))}[/red]"
+            )
+            return
+        if populate:
+            self.query_one("#web-bind", Input).value = current.bind
+            self.query_one("#web-port", Input).value = str(current.port)
+        enabled = "[green]已启用[/green]" if current.enabled else "[dim]默认关闭[/dim]"
+        running = "[green]运行中[/green]" if current.running else "[dim]未运行[/dim]"
+        pid = f" · PID {current.pid}" if current.pid else ""
+        self.query_one("#web-summary", Static).update(
+            f"功能状态    {enabled}\n运行状态    {running}{pid}\n访问地址    "
+            f"[cyan]{escape(current.url)}[/cyan]"
+        )
+        start = self.query_one("#web-start", Button)
+        stop = self.query_one("#web-stop", Button)
+        disable = self.query_one("#web-disable", Button)
+        token = self.query_one("#web-token", Button)
+        start.disabled = not current.enabled or current.running
+        stop.disabled = not current.running
+        disable.disabled = not current.enabled
+        token.disabled = not current.enabled
+        if reveal_token:
+            self.query_one("#web-message", Static).update(
+                "[b green]登录令牌[/b green]\n"
+                f"[cyan]{escape(reveal_token)}[/cyan]\n\n"
+                "令牌保存在本机 local/secrets 中，不会同步到 GitHub。"
+            )
+
+    def action_refresh(self) -> None:
+        self.refresh_view(populate=True)
+
+    @on(Button.Pressed)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        action = event.button.id
+        if action == "web-enable":
+            self.apply_operation("enable")
+        elif action == "web-start":
+            self.apply_operation("start")
+        elif action == "web-stop":
+            self.app.push_screen(
+                ConfirmActionScreen(
+                    "停止 Web 管理",
+                    "现有网页会话将立即断开；配置和令牌会保留。",
+                    "停止",
+                ),
+                lambda confirmed: self.apply_operation("stop") if confirmed else None,
+            )
+        elif action == "web-disable":
+            self.app.push_screen(
+                ConfirmActionScreen(
+                    "关闭 Web 管理功能",
+                    "Web 服务将停止并恢复为默认关闭；配置和令牌仍保留在本机。",
+                    "关闭功能",
+                ),
+                lambda confirmed: self.apply_operation("disable") if confirmed else None,
+            )
+        elif action == "web-token":
+            self.app.push_screen(
+                ConfirmActionScreen(
+                    "重置 Web 登录令牌",
+                    "旧令牌和已经登录的会话会立即失效；运行中的 Web 服务会自动重启。",
+                    "重置令牌",
+                ),
+                lambda confirmed: self.apply_operation("token") if confirmed else None,
+            )
+
+    @work(exclusive=True, group="web-control")
+    async def apply_operation(self, action: str) -> None:
+        message = self.query_one("#web-message", Static)
+        message.update("[cyan]正在处理…[/cyan]")
+        try:
+            revealed: str | None = None
+            if action == "enable":
+                bind = self.query_one("#web-bind", Input).value.strip()
+                port = int(self.query_one("#web-port", Input).value)
+                revealed = await asyncio.to_thread(web_enable, self.root_path, bind, port)
+            elif action == "start":
+                await asyncio.to_thread(start_web, self.root_path)
+            elif action == "stop":
+                await asyncio.to_thread(stop_web, self.root_path)
+            elif action == "disable":
+                await asyncio.to_thread(disable_web, self.root_path)
+            elif action == "token":
+                revealed = await asyncio.to_thread(rotate_web_token, self.root_path)
+            self.refresh_view(reveal_token=revealed)
+            if revealed is None:
+                message.update("[green]操作已完成。[/green]")
+        except (HomelabError, OSError, ValueError) as exc:
+            message.update(f"[red]{escape(str(exc))}[/red]")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class NControlApp(App[None]):
     TITLE = "NControl"
     SUB_TITLE = "个人服务器服务管理器"
@@ -2226,6 +2422,7 @@ class NControlApp(App[None]):
         Binding("m", "migration", "迁移初始化"),
         Binding("u", "update", "更新管理器"),
         Binding("w", "wireguard", "WireGuard 管理"),
+        Binding("v", "web", "Web 管理"),
         Binding("tab", "wireguard_tab_next", "下一个区域", show=False),
         Binding("ctrl+i", "wireguard_tab_next", "下一个区域", show=False),
         Binding("shift+tab", "wireguard_tab_previous", "上一个区域", show=False, priority=True),
@@ -2644,6 +2841,11 @@ class NControlApp(App[None]):
             return
         self._remember_service(service)
         self.push_screen(WireGuardManagerScreen(service), self._wireguard_closed)
+
+    def action_web(self) -> None:
+        if isinstance(self.screen, WebManagerScreen):
+            return
+        self.push_screen(WebManagerScreen(self.root_path))
 
     def _remember_service(self, service: ServiceDefinition) -> None:
         self.services_by_name[service.name] = service

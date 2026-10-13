@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NControl 控制台</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">N</span><div><strong>NControl</strong><small>LOCAL CONTROL PLANE</small></div></div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item active" data-view="dashboard"><span>◈</span>服务</button>
+        <button class="nav-item" data-view="wireguard"><span>⌘</span>WireGuard</button>
+        <button class="nav-item" data-view="system"><span>◎</span>系统</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="secure-chip"><span></span>本机受保护会话</div>
+        <button class="text-button" id="logout-button">退出登录</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><p class="eyebrow" id="view-eyebrow">SERVICES</p><h1 id="view-title">服务控制台</h1></div>
+        <div class="top-actions"><span class="last-update" id="last-update">正在连接…</span><button class="icon-button" id="refresh-button" title="刷新">↻</button></div>
+      </header>
+
+      <section class="view active" id="dashboard-view">
+        <div class="summary-grid" id="summary-grid"></div>
+        <div class="dashboard-grid">
+          <section class="panel services-panel">
+            <div class="panel-heading"><div><p class="eyebrow">SERVICES</p><h2>服务列表</h2></div><span class="count" id="service-count">0</span></div>
+            <div class="service-list" id="service-list"></div>
+          </section>
+          <section class="panel detail-panel">
+            <div id="service-empty" class="empty-state"><span>◈</span><h2>选择一个服务</h2><p>查看健康状态、配置与可用操作。</p></div>
+            <div id="service-detail" hidden>
+              <div class="detail-head"><div><div class="status-line"><span class="status-dot" id="detail-dot"></span><span id="detail-state"></span></div><h2 id="detail-name"></h2><p id="detail-description" class="muted"></p></div><span class="driver-badge" id="detail-driver"></span></div>
+              <div class="detail-meta" id="detail-meta"></div>
+              <div class="health-list" id="health-list"></div>
+              <div class="action-row" id="service-actions"></div>
+            </div>
+          </section>
+          <section class="panel log-panel">
+            <div class="panel-heading"><div><p class="eyebrow">LIVE TAIL</p><h2 id="log-title">最近日志</h2></div><div class="inline-actions"><button class="small-button" id="log-refresh">刷新</button><button class="small-button danger-ghost" id="log-clear">清空</button></div></div>
+            <pre id="log-output" class="log-output">选择服务后显示最近 200 行日志。</pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="wireguard-view">
+        <div class="view-toolbar"><select id="wireguard-service" aria-label="WireGuard 服务"></select><button class="button secondary" id="wg-new-server">新建服务端</button><button class="button secondary" id="wg-import-client">连接其他服务端</button></div>
+        <div class="wg-layout">
+          <section><div class="section-title"><div><p class="eyebrow">SERVER INTERFACES</p><h2>服务端接口</h2></div></div><div class="card-grid" id="wg-servers"></div></section>
+          <section><div class="section-title"><div><p class="eyebrow">CLIENT INTERFACES</p><h2>客户端接口</h2></div></div><div class="card-grid" id="wg-clients"></div></section>
+          <section><div class="section-title"><div><p class="eyebrow">NETWORK LINKS</p><h2>网络连接</h2></div><button class="small-button" id="wg-add-connection">添加连接</button></div><div class="card-grid" id="wg-connections"></div></section>
+        </div>
+      </section>
+
+      <section class="view" id="system-view">
+        <div class="system-grid">
+          <section class="panel"><div class="panel-heading"><div><p class="eyebrow">AUDIT</p><h2>系统冲突检查</h2></div><button class="small-button" id="doctor-run">重新检查</button></div><div class="result-list" id="doctor-results"><p class="muted">点击检查端口、网段和 WireGuard 密钥冲突。</p></div></section>
+          <section class="panel"><div class="panel-heading"><div><p class="eyebrow">UPDATE</p><h2>NControl 更新</h2></div><button class="small-button" id="update-check">检查更新</button></div><div id="update-result" class="result-list"><p class="muted">更新只修改公共代码，不触碰 local/ 数据。</p></div></section>
+          <section class="panel wide"><div class="panel-heading"><div><p class="eyebrow">MIGRATION</p><h2>迁移与主机初始化</h2></div><button class="small-button" id="migration-check">刷新检查</button></div><div id="migration-results" class="result-list"></div><div class="migration-actions"><input id="public-host" placeholder="新公网 IP 或域名"><button class="small-button" data-migration="apply-public-host">更新公网入口</button><button class="small-button" data-migration="configure-wireguard-host">配置 WireGuard 主机</button><button class="small-button" data-migration="install-boot">安装开机入口</button><button class="small-button" data-migration="start-autostart">启动自动服务</button><button class="small-button" data-migration="finish">标记初始化完成</button></div></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="modal"><form method="dialog" class="modal-card" id="modal-form"><div class="modal-head"><div><p class="eyebrow" id="modal-eyebrow">ACTION</p><h2 id="modal-title"></h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div><div id="modal-content" class="modal-content"></div><div class="modal-actions"><button class="button secondary" value="cancel">取消</button><button class="button primary" id="modal-confirm" value="default">确认</button></div></form></dialog>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+  <script src="/assets/app.js" defer></script>
+</body>
+</html>

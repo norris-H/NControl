@@ -62,6 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
         command = boot_sub.add_parser(command_name)
         command.add_argument("service")
 
+    web = sub.add_parser("web", help="管理默认关闭的本机 Web 控制台")
+    web_sub = web.add_subparsers(dest="web_command", required=True)
+    web_sub.add_parser("status", help="查看 Web 控制台状态")
+    web_enable = web_sub.add_parser("enable", help="启用 Web 控制台（不会自动启动）")
+    web_enable.add_argument("--bind", default="127.0.0.1", help="本机或 WireGuard IPv4 地址")
+    web_enable.add_argument("--port", type=int, default=8765)
+    web_sub.add_parser("start", help="启动 Web 控制台")
+    web_sub.add_parser("stop", help="停止 Web 控制台")
+    web_sub.add_parser("disable", help="停止并关闭 Web 控制台")
+    web_sub.add_parser("token", help="重置登录令牌")
+
     migrate = sub.add_parser("migrate", help="检查或初始化迁移后的 Debian 系 Linux")
     migrate_sub = migrate.add_subparsers(dest="migrate_command", required=True)
     migrate_sub.add_parser("check", help="只读检查新服务器运行环境")
@@ -267,6 +278,40 @@ def run(args: argparse.Namespace) -> int:
             print(uninstall(root))
             return 0
         print("已安装" if is_installed(root) else "未安装")
+        return 0
+
+    if args.command == "web":
+        from .web_control import (
+            disable as disable_web,
+            enable as enable_web,
+            rotate_token,
+            start as start_web,
+            status as web_status,
+            stop as stop_web,
+        )
+
+        token: str | None = None
+        if args.web_command == "enable":
+            token = enable_web(root, args.bind, args.port)
+            result = web_status(root)
+        elif args.web_command == "start":
+            result = start_web(root)
+        elif args.web_command == "stop":
+            result = stop_web(root)
+        elif args.web_command == "disable":
+            result = disable_web(root)
+        elif args.web_command == "token":
+            token = rotate_token(root)
+            result = web_status(root)
+        else:
+            result = web_status(root)
+        print(f"Web 管理：{'运行中' if result.running else '未运行'} / {'已启用' if result.enabled else '默认关闭'}")
+        print(f"访问地址：{result.url}")
+        if result.pid is not None:
+            print(f"进程 PID：{result.pid}")
+        if token is not None:
+            print(f"登录令牌：{token}")
+            print("请妥善保存；可在 TUI 的 Web 管理中随时重置。")
         return 0
 
     if args.command == "migrate":

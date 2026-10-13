@@ -19,6 +19,7 @@ from homelabctl.tui import (
     MigrationScreen,
     NControlApp,
     StopConfirmScreen,
+    WebManagerScreen,
     WireGuardManagerScreen,
     WireGuardConnectionScreen,
     WireGuardQrScreen,
@@ -64,6 +65,26 @@ spec:
 
 @unittest.skipIf(os.name == "nt", "Textual headless tests hang in this Windows sandbox")
 class TuiTests(unittest.TestCase):
+    def test_web_key_opens_disabled_web_manager(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SERVICE, encoding="utf-8")
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.press("v")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, WebManagerScreen)
+                    self.assertIn(
+                        "默认关闭",
+                        str(app.screen.query_one("#web-summary", Static).render()),
+                    )
+                    app.screen.dismiss(None)
+
+            asyncio.run(scenario())
+
     def test_update_key_opens_confirmation_when_update_is_available(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "services" / "web" / "service.yaml"
