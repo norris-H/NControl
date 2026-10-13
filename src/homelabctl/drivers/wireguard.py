@@ -97,9 +97,18 @@ class WireGuardDriver(Driver):
         )
 
     def config_values(self) -> list[str]:
-        values = super().config_values()
-        values.extend(str(interface["config"]) for interface in self._interfaces())
-        return values
+        # The interface list is authoritative for this machine.  A copied
+        # service definition may still contain legacy ``config.files`` entries
+        # for interfaces that are not installed on the current node.
+        values: list[str] = []
+        for interface in self._interfaces():
+            values.append(str(interface["config"]))
+            management = interface.get("peerManagement")
+            if isinstance(management, dict):
+                public_key = management.get("serverPublicKeyFile")
+                if isinstance(public_key, str) and public_key:
+                    values.append(public_key)
+        return list(dict.fromkeys(values))
 
     def management_plan(self, operation: str, *arguments: str) -> CommandPlan:
         """Build a plan for the Linux-only WireGuard management helper."""

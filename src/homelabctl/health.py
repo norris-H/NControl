@@ -242,8 +242,27 @@ def check_health(service: ServiceDefinition) -> HealthResult:
 
     results: list[HealthCheckResult] = []
     health = service.spec.get("health", {})
+    active_interfaces: set[str] | None = None
+    if service.driver == "wireguard":
+        wireguard = service.spec.get("wireguard", {})
+        interfaces = wireguard.get("interfaces") if isinstance(wireguard, dict) else None
+        if isinstance(interfaces, list):
+            active_interfaces = {
+                str(item.get("name"))
+                for item in interfaces
+                if isinstance(item, dict) and item.get("name")
+            }
+        elif isinstance(wireguard, dict) and wireguard.get("interface"):
+            active_interfaces = {str(wireguard["interface"])}
     for check in health.get("checks", []):
         check_type = check["type"]
+        check_interface = check.get("interface")
+        if (
+            active_interfaces is not None
+            and isinstance(check_interface, str)
+            and check_interface not in active_interfaces
+        ):
+            continue
         if check_type == "http":
             results.append(_http_check(check, context))
         elif check_type == "tcp":

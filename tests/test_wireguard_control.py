@@ -360,6 +360,22 @@ class WireGuardControlTests(unittest.TestCase):
         service, directory = self._service()
         raw = yaml.safe_load((directory / "service.yaml").read_text(encoding="utf-8"))
         raw["spec"]["wireguard"]["connections"] = []
+        raw["spec"]["config"] = {
+            "files": [
+                "config/wg0.conf",
+                "config/wg1.conf",
+                "secrets/wg1/private.key",
+            ]
+        }
+        raw["spec"]["health"] = {
+            "checks": [
+                {
+                    "name": "wg1-check",
+                    "type": "wireguard-handshake",
+                    "interface": "wg1",
+                }
+            ]
+        }
         (directory / "service.yaml").write_text(
             yaml.safe_dump(raw, allow_unicode=True, sort_keys=False),
             encoding="utf-8",
@@ -375,6 +391,8 @@ class WireGuardControlTests(unittest.TestCase):
             "wg1",
             [item["name"] for item in final.spec["wireguard"]["interfaces"]],
         )
+        self.assertEqual(final.spec["config"]["files"], ["config/wg0.conf"])
+        self.assertEqual(final.spec["health"]["checks"], [])
         archived = list(
             (directory / "secrets" / "revoked" / "interfaces").glob(
                 "*-wg1/config/wg1.conf"

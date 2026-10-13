@@ -1363,6 +1363,30 @@ def _delete_interface(
         for item in raw["spec"]["wireguard"]["interfaces"]
         if item.get("name") != interface_name
     ]
+    config_section = raw["spec"].get("config")
+    if isinstance(config_section, dict) and isinstance(config_section.get("files"), list):
+        interface_config = (
+            str(interface.get("config", "")).replace("\\", "/").lstrip("./")
+        )
+        secret_prefix = f"secrets/{interface_name}/"
+        config_section["files"] = [
+            value
+            for value in config_section["files"]
+            if not (
+                isinstance(value, str)
+                and (
+                    value.replace("\\", "/").lstrip("./") == interface_config
+                    or value.replace("\\", "/").lstrip("./").startswith(secret_prefix)
+                )
+            )
+        ]
+    health = raw["spec"].get("health")
+    if isinstance(health, dict) and isinstance(health.get("checks"), list):
+        health["checks"] = [
+            check
+            for check in health["checks"]
+            if not isinstance(check, dict) or check.get("interface") != interface_name
+        ]
     service_mode = service.path.stat().st_mode & 0o777
     try:
         _atomic_write(

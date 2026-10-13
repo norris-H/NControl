@@ -100,6 +100,8 @@ kind: Service
 metadata: {name: wg0}
 spec:
   driver: wireguard
+  config:
+    files: [config/wg0.conf, config/wg1.conf, config/unused.conf, secrets/wg9/private.key]
   wireguard:
     interface: wg0
     config: config/wg0.conf
@@ -107,6 +109,7 @@ spec:
         with patch("homelabctl.drivers.wireguard._is_windows", return_value=False):
             argv = get_driver(service).plans("status")[0].argv
         self.assertEqual(argv, ("sudo", "-n", "wg", "show", "wg0"))
+        self.assertEqual(get_driver(service).config_values(), ["config/wg0.conf"])
 
     def test_wireguard_combines_client_and_server(self):
         service = self._service("""\
