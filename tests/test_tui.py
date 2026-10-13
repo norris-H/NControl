@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import yaml
 
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, RichLog, Static
 
 from homelabctl.tui import (
     AddWireGuardPeerScreen,
@@ -160,6 +160,38 @@ class TuiTests(unittest.TestCase):
                     self.assertNotIn("原始目录", detail)
                     self.assertNotIn("/srv/legacy-web", detail)
                     self.assertIn("8080", detail)
+
+            asyncio.run(scenario())
+
+    def test_dashboard_loads_selected_service_logs_automatically(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "services" / "web"
+            directory.mkdir(parents=True)
+            (directory / "service.yaml").write_text(
+                """\
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata: {name: web, description: Test service}
+spec:
+  driver: script
+  script:
+    commands:
+      logs: ["{python}", -c, "print('campus log ready')"]
+""",
+                encoding="utf-8",
+            )
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+                    output = app.query_one("#output", RichLog)
+                    self.assertIn("web", output.border_title)
+                    self.assertIn(
+                        "campus log ready",
+                        "\n".join(line.text for line in output.lines),
+                    )
 
             asyncio.run(scenario())
 

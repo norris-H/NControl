@@ -2218,7 +2218,7 @@ class NControlApp(App[None]):
         Binding("s", "start_service", "启动服务"),
         Binding("x", "stop_service", "停止服务"),
         Binding("enter", "details", "服务详情"),
-        Binding("l", "logs", "查看日志"),
+        Binding("l", "logs", "刷新日志"),
         Binding("c", "check_config", "配置检查"),
         Binding("d", "doctor", "系统检查"),
         Binding("a", "toggle_autostart", "切换开机启动"),
@@ -2259,6 +2259,7 @@ class NControlApp(App[None]):
 
     def on_mount(self) -> None:
         table = self.query_one("#services", DataTable)
+        self.query_one("#output", RichLog).border_title = "当前服务日志"
         table.add_column("服务", key="name", width=16)
         table.add_column("状态", key="status", width=16)
         table.add_column("驱动", key="driver", width=10)
@@ -2267,6 +2268,7 @@ class NControlApp(App[None]):
         if self.periodic_status_refresh:
             self.refresh_statuses()
             self.set_interval(self.refresh_seconds, self.refresh_statuses)
+            self.set_interval(self.refresh_seconds, self.refresh_selected_logs)
         if self.open_migration:
             self.call_after_refresh(self.action_migration)
 
@@ -2330,6 +2332,9 @@ class NControlApp(App[None]):
             self.selected_name = self.services[0].name
             table.move_cursor(row=0)
             self._render_details(self.services[0])
+            if not self.open_migration:
+                self._show_log_loading(self.services[0])
+                self.load_logs(self.services[0])
         else:
             self.selected_name = None
             self.query_one("#detail", Static).update(
@@ -2339,14 +2344,24 @@ class NControlApp(App[None]):
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         value = event.row_key.value
         if isinstance(value, str) and value in self.services_by_name:
+            changed = value != self.selected_name
             self.selected_name = value
-            self._render_details(self.services_by_name[value])
+            service = self.services_by_name[value]
+            self._render_details(service)
+            if changed:
+                self._show_log_loading(service)
+                self.load_logs(service)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         value = event.row_key.value
         if isinstance(value, str) and value in self.services_by_name:
+            changed = value != self.selected_name
             self.selected_name = value
-            self._render_details(self.services_by_name[value])
+            service = self.services_by_name[value]
+            self._render_details(service)
+            if changed:
+                self._show_log_loading(service)
+                self.load_logs(service)
 
     def _selected_service(self) -> ServiceDefinition | None:
         if self.selected_name is None:
@@ -2444,6 +2459,26 @@ class NControlApp(App[None]):
     def _write(self, message: str) -> None:
         self.query_one("#output", RichLog).write(message)
 
+    def _show_log_loading(self, service: ServiceDefinition) -> None:
+        output = self.query_one("#output", RichLog)
+        output.border_title = f"{service.name} · 最近日志"
+        output.clear()
+        output.write(f"[dim]正在读取 {escape(service.name)} 日志…[/dim]")
+
+    def _replace_service_logs(
+        self,
+        service: ServiceDefinition,
+        message: str,
+        *,
+        color: str = "white",
+    ) -> None:
+        if service.name != self.selected_name:
+            return
+        output = self.query_one("#output", RichLog)
+        output.border_title = f"{service.name} · 最近日志"
+        output.clear()
+        output.write(f"[{color}]{escape(message)}[/{color}]")
+
     def action_details(self) -> None:
         service = self._selected_service()
         if service:
@@ -2508,7 +2543,13 @@ class NControlApp(App[None]):
     def action_migration(self) -> None:
         if isinstance(self.screen, MigrationScreen):
             return
-        self.push_screen(MigrationScreen(self.root_path))
+        self.push_screen(MigrationScreen(self.root_path), self._migration_closed)
+
+    def _migration_closed(self, _: None) -> None:
+        service = self._selected_service()
+        if service:
+            self._show_log_loading(service)
+            self.load_logs(service)
 
     def action_update(self) -> None:
         self.check_code_update()
@@ -2555,6 +2596,12 @@ class NControlApp(App[None]):
         self._write("[yellow]请按 Q 退出后重新运行 ./ncontrol，使新版本完全生效。[/yellow]")
 
     def action_logs(self) -> None:
+        service = self._selected_service()
+        if service:
+            self._show_log_loading(service)
+            self.load_logs(service)
+
+    def refresh_selected_logs(self) -> None:
         service = self._selected_service()
         if service:
             self.load_logs(service)
@@ -2672,18 +2719,17 @@ class NControlApp(App[None]):
 
     @work(exclusive=True, group="logs")
     async def load_logs(self, service: ServiceDefinition) -> None:
-        self._write(f"[b cyan]读取 {escape(service.name)} 日志…[/b cyan]")
         try:
             plans = get_driver(service).plans("logs", follow=False, tail=200)
             code, output = await self._run_plans(plans, timeout=20)
         except UnsupportedOperation as exc:
-            self._write(f"[yellow]{escape(str(exc))}[/yellow]")
+            self._replace_service_logs(service, str(exc), color="yellow")
             return
         except (HomelabError, OSError) as exc:
-            self._write(f"[red]{escape(str(exc))}[/red]")
+            self._replace_service_logs(service, str(exc), color="red")
             return
         color = "white" if code == 0 else "red"
-        self._write(f"[{color}]{escape(output or '(无日志输出)')}[/{color}]")
+        self._replace_service_logs(service, output or "(暂无日志输出)", color=color)
 
     async def _run_plans(
         self,
