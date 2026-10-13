@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import yaml
 
-from textual.widgets import Button, DataTable, RichLog, Static
+from textual.widgets import Button, DataTable, Input, RichLog, Static
 
 from homelabctl.tui import (
     AddWireGuardPeerScreen,
@@ -82,6 +82,7 @@ class TuiTests(unittest.TestCase):
                         "默认关闭",
                         str(app.screen.query_one("#web-summary", Static).render()),
                     )
+                    app.screen.query_one("#web-token-value", Input).value = "1"
                     await pilot.click("#web-apply")
                     await app.workers.wait_for_complete()
                     self.assertTrue(
@@ -95,7 +96,11 @@ class TuiTests(unittest.TestCase):
                     )
                     self.assertNotIn(
                         "尚未生成",
-                        str(app.screen.query_one("#web-token-value", Static).render()),
+                        app.screen.query_one("#web-token-value", Input).value,
+                    )
+                    self.assertEqual(
+                        app.screen.query_one("#web-token-value", Input).value,
+                        "1",
                     )
                     await asyncio.to_thread(stop_web, Path(temp))
                     app.screen.dismiss(None)

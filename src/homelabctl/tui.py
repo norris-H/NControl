@@ -53,7 +53,6 @@ from .web_control import (
     apply_and_start as apply_and_start_web,
     disable as disable_web,
     read_token as read_web_token,
-    rotate_token as rotate_web_token,
     status as web_status,
     stop as stop_web,
 )
@@ -2235,7 +2234,6 @@ class WebManagerScreen(ModalScreen[None]):
         height: 3;
         border: round $secondary;
         padding: 0 2;
-        content-align: left middle;
         color: $accent;
         text-style: bold;
     }
@@ -2259,8 +2257,11 @@ class WebManagerScreen(ModalScreen[None]):
         yield Static("Web 管理  ·  默认关闭，建议只通过 localhost 或 WireGuard 访问", id="web-title")
         with VerticalScroll(id="web-body"):
             yield Static(id="web-summary", markup=True)
-            yield Static("登录令牌（打开网页时使用）", id="web-token-title")
-            yield Static("尚未生成", id="web-token-value", markup=False)
+            yield Static("登录令牌（可自行设置，不能为空）", id="web-token-title")
+            yield Input(
+                placeholder="输入你自己的登录令牌",
+                id="web-token-value",
+            )
             with Horizontal(id="web-settings"):
                 with Vertical(id="web-bind-field", classes="web-field"):
                     yield Label("监听地址（本机 IPv4；推荐 127.0.0.1 或 WireGuard 地址）")
@@ -2272,7 +2273,6 @@ class WebManagerScreen(ModalScreen[None]):
                 yield Button("启用并启动", id="web-apply", variant="primary")
                 yield Button("停止", id="web-stop", variant="warning")
                 yield Button("关闭功能", id="web-disable", variant="error")
-                yield Button("重置令牌", id="web-token")
             yield Static(
                 "修改地址或端口后点击主按钮即可应用；如果 Web 正在运行，会自动安全重启。",
                 id="web-message",
@@ -2307,22 +2307,20 @@ class WebManagerScreen(ModalScreen[None]):
         apply = self.query_one("#web-apply", Button)
         stop = self.query_one("#web-stop", Button)
         disable = self.query_one("#web-disable", Button)
-        token = self.query_one("#web-token", Button)
         if current.running:
-            apply.label = "应用设置并重启"
+            apply.label = "保存并重启"
         elif current.enabled:
-            apply.label = "启动"
+            apply.label = "保存并启动"
         else:
-            apply.label = "启用并启动"
+            apply.label = "保存并启动"
         stop.disabled = not current.running
         disable.disabled = not current.enabled
-        token.disabled = not current.enabled
         if reveal_token is None:
             try:
                 reveal_token = read_web_token(self.root_path)
             except HomelabError:
-                reveal_token = "尚未生成；点击“启用并启动”后会自动生成"
-        self.query_one("#web-token-value", Static).update(reveal_token)
+                reveal_token = ""
+        self.query_one("#web-token-value", Input).value = reveal_token
 
     def action_refresh(self) -> None:
         self.refresh_view(populate=True)
@@ -2350,15 +2348,6 @@ class WebManagerScreen(ModalScreen[None]):
                 ),
                 lambda confirmed: self.apply_operation("disable") if confirmed else None,
             )
-        elif action == "web-token":
-            self.app.push_screen(
-                ConfirmActionScreen(
-                    "重置 Web 登录令牌",
-                    "旧令牌和已经登录的会话会立即失效；运行中的 Web 服务会自动重启。",
-                    "重置令牌",
-                ),
-                lambda confirmed: self.apply_operation("token") if confirmed else None,
-            )
 
     @work(exclusive=True, group="web-control")
     async def apply_operation(self, action: str) -> None:
@@ -2369,18 +2358,18 @@ class WebManagerScreen(ModalScreen[None]):
             if action == "apply":
                 bind = self.query_one("#web-bind", Input).value.strip()
                 port = int(self.query_one("#web-port", Input).value)
+                token_value = self.query_one("#web-token-value", Input).value
                 _, revealed = await asyncio.to_thread(
                     apply_and_start_web,
                     self.root_path,
                     bind,
                     port,
+                    token_value,
                 )
             elif action == "stop":
                 await asyncio.to_thread(stop_web, self.root_path)
             elif action == "disable":
                 await asyncio.to_thread(disable_web, self.root_path)
-            elif action == "token":
-                revealed = await asyncio.to_thread(rotate_web_token, self.root_path)
             self.refresh_view(populate=True, reveal_token=revealed)
             if action == "apply":
                 message.update(

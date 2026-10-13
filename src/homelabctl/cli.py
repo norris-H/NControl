@@ -71,7 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
     web_sub.add_parser("start", help="启动 Web 控制台")
     web_sub.add_parser("stop", help="停止 Web 控制台")
     web_sub.add_parser("disable", help="停止并关闭 Web 控制台")
-    web_sub.add_parser("token", help="重置登录令牌")
+    web_token = web_sub.add_parser("token", help="设置登录令牌；不填则随机生成")
+    web_token.add_argument("value", nargs="?", help="任意非空单行内容")
 
     migrate = sub.add_parser("migrate", help="检查或初始化迁移后的 Debian 系 Linux")
     migrate_sub = migrate.add_subparsers(dest="migrate_command", required=True)
@@ -285,6 +286,7 @@ def run(args: argparse.Namespace) -> int:
             disable as disable_web,
             enable as enable_web,
             rotate_token,
+            set_token,
             start as start_web,
             status as web_status,
             stop as stop_web,
@@ -301,7 +303,11 @@ def run(args: argparse.Namespace) -> int:
         elif args.web_command == "disable":
             result = disable_web(root)
         elif args.web_command == "token":
-            token = rotate_token(root)
+            token = (
+                set_token(root, args.value)
+                if args.value is not None
+                else rotate_token(root)
+            )
             result = web_status(root)
         else:
             result = web_status(root)

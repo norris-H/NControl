@@ -110,7 +110,7 @@ def _atomic_yaml(path: Path, value: dict[str, Any]) -> None:
 def _ensure_token(root: Path) -> str:
     path = token_path(root)
     try:
-        token = path.read_text(encoding="utf-8").strip()
+        token = path.read_text(encoding="utf-8").rstrip("\r\n")
     except FileNotFoundError:
         token = ""
     if token:
@@ -127,11 +127,68 @@ def _ensure_token(root: Path) -> str:
 
 def read_token(root: Path) -> str:
     try:
-        token = token_path(root).read_text(encoding="utf-8").strip()
+        token = token_path(root).read_text(encoding="utf-8").rstrip("\r\n")
     except OSError as exc:
         raise HomelabError("Web 管理令牌不存在；请先启用 Web 管理") from exc
     if not token:
         raise HomelabError("Web 管理令牌为空；请重置令牌")
+    return token
+
+
+def _write_token(root: Path, token: str) -> str:
+    if token == "":
+        raise HomelabError("Web 登录令牌不能为空")
+    if "\r" in token or "\n" in token:
+        raise HomelabError("Web 登录令牌必须是单行内容")
+    path = token_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(token + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+    if os.name != "nt":
+        path.chmod(0o600)
+    return token
+
+
+def _token_contents(root: Path) -> str | None:
+    try:
+        return token_path(root).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def _restore_token(root: Path, contents: str | None) -> None:
+    path = token_path(root)
+    if contents is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(contents, encoding="utf-8")
+    os.replace(temporary, path)
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
+def set_token(root: Path, token: str) -> str:
+    root = root.resolve()
+    config = load_config(root)
+    previous_token = _token_contents(root)
+    was_running = _live_process(root) is not None
+    if was_running:
+        stop(root)
+    try:
+        _write_token(root, token)
+        if was_running and config["enabled"]:
+            start(root)
+    except Exception:
+        _restore_token(root, previous_token)
+        if was_running and config["enabled"]:
+            try:
+                start(root)
+            except (HomelabError, OSError):
+                pass
+        raise
     return token
 
 
@@ -141,6 +198,7 @@ def enable(root: Path, bind: str = DEFAULT_BIND, port: int = DEFAULT_PORT) -> st
     if bind not in _local_ipv4_addresses():
         raise HomelabError(f"监听地址 {bind} 不是当前主机的 IPv4 地址")
     previous = load_config(root)
+    previous_token = _token_contents(root)
     if _live_process(root) is not None and (
         bind != previous["bind"] or port != previous["port"]
     ):
@@ -323,6 +381,7 @@ def apply_and_start(
     root: Path,
     bind: str = DEFAULT_BIND,
     port: int = DEFAULT_PORT,
+    token: str | None = None,
 ) -> tuple[WebStatus, str]:
     """Validate, save and start Web management as one recoverable operation."""
     root = root.resolve()
@@ -334,10 +393,13 @@ def apply_and_start(
     if was_running:
         stop(root)
     try:
+        if token is not None:
+            _write_token(root, token)
         token = enable(root, bind, port)
         current = start(root)
     except Exception:
         _atomic_yaml(config_path(root), previous)
+        _restore_token(root, previous_token)
         if was_running and previous["enabled"]:
             try:
                 start(root)

@@ -18,6 +18,7 @@ from homelabctl.web_control import (
     load_config,
     read_token,
     rotate_token,
+    set_token,
     status,
     stop,
 )
@@ -66,6 +67,8 @@ class WebControlTests(unittest.TestCase):
             self.assertTrue((root / "local" / "web.yaml").exists())
             self.assertTrue((root / "local" / "secrets" / "web-token.txt").exists())
             self.assertNotEqual(rotate_token(root), token)
+            self.assertEqual(set_token(root, "短 token !@# 中文"), "短 token !@# 中文")
+            self.assertEqual(read_token(root), "短 token !@# 中文")
 
     def test_enable_rejects_public_wildcard(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -80,8 +83,14 @@ class WebControlTests(unittest.TestCase):
                 probe.bind(("127.0.0.1", 0))
                 port = int(probe.getsockname()[1])
             try:
-                first, first_token = apply_and_start(root, "127.0.0.1", port)
+                first, first_token = apply_and_start(
+                    root,
+                    "127.0.0.1",
+                    port,
+                    "1",
+                )
                 self.assertTrue(first.running)
+                self.assertEqual(first_token, "1")
                 connection = HTTPConnection("127.0.0.1", port, timeout=5)
                 connection.request("GET", "/login")
                 response = connection.getresponse()
@@ -93,7 +102,7 @@ class WebControlTests(unittest.TestCase):
                     second_probe.bind(("127.0.0.1", 0))
                     second_port = int(second_probe.getsockname()[1])
                 reapplied, same_token = apply_and_start(
-                    root, "127.0.0.1", second_port
+                    root, "127.0.0.1", second_port, "1"
                 )
                 self.assertTrue(reapplied.running)
                 self.assertEqual(same_token, first_token)
@@ -132,7 +141,8 @@ class WebHttpSecurityTests(unittest.TestCase):
     def test_login_cookie_csrf_and_assets(self):
         with tempfile.TemporaryDirectory() as temp:
             root = make_root(temp)
-            token = enable(root)
+            enable(root)
+            token = set_token(root, "1")
             server = NControlHTTPServer(("127.0.0.1", 0), root, token)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
