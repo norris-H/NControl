@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import shutil
 import subprocess
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from .errors import HomelabError
+
+
+OFFICIAL_REPOSITORY = "norris-H/NControl"
+OFFICIAL_COMMIT_API = (
+    f"https://api.github.com/repos/{OFFICIAL_REPOSITORY}/commits/main"
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +63,41 @@ def _revision(root: Path, name: str) -> str:
     return _git(root, "rev-parse", name).stdout.strip()
 
 
+def _uses_official_repository(remote_url: str) -> bool:
+    normalized = remote_url.replace("\\", "/").lower()
+    return OFFICIAL_REPOSITORY.lower() in normalized
+
+
+def _official_revision(*, timeout: float = 10) -> str:
+    request = Request(
+        OFFICIAL_COMMIT_API,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "NControl-Updater",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.load(response)
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+        raise HomelabError(
+            "无法通过 GitHub 官方 API 校验更新；为保证安全，已停止更新"
+        ) from exc
+    revision = payload.get("sha") if isinstance(payload, dict) else None
+    if not isinstance(revision, str) or len(revision) != 40:
+        raise HomelabError("GitHub 官方 API 返回了无法识别的提交编号")
+    return revision
+
+
+def _verify_official_target(target: str) -> None:
+    official = _official_revision()
+    if target != official:
+        raise HomelabError(
+            "更新入口尚未同步 GitHub 最新版本，或内容校验失败；已拒绝更新"
+        )
+
+
 def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
     root = root.resolve()
     if not (root / ".git").exists():
@@ -68,6 +112,8 @@ def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
 
     current = _revision(root, "HEAD")
     target = _revision(root, "origin/main")
+    if _uses_official_repository(remote_url):
+        _verify_official_target(target)
     status = _git(root, "status", "--porcelain", "--untracked-files=all").stdout.strip()
     counts = _git(
         root,

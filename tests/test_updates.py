@@ -7,7 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from homelabctl.errors import HomelabError
-from homelabctl.updates import apply_update, check_for_updates
+from homelabctl.updates import (
+    _uses_official_repository,
+    _verify_official_target,
+    apply_update,
+    check_for_updates,
+)
 
 
 def run_git(directory: Path, *arguments: str) -> None:
@@ -23,6 +28,29 @@ def run_git(directory: Path, *arguments: str) -> None:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_official_repository_is_detected_inside_proxy_url(self):
+        self.assertTrue(
+            _uses_official_repository(
+                "https://gh-proxy.org/https://github.com/norris-H/NControl.git"
+            )
+        )
+        self.assertFalse(_uses_official_repository("C:/tmp/remote.git"))
+
+    def test_mirror_revision_must_match_official_github_revision(self):
+        revision = "a" * 40
+        with patch(
+            "homelabctl.updates._official_revision",
+            return_value="b" * 40,
+        ):
+            with self.assertRaisesRegex(HomelabError, "校验失败"):
+                _verify_official_target(revision)
+
+        with patch(
+            "homelabctl.updates._official_revision",
+            return_value=revision,
+        ):
+            _verify_official_target(revision)
+
     def test_network_timeout_has_clear_error(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
