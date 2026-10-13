@@ -1,0 +1,10 @@
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata:
+  name: docker-container
+  description: 已有 Docker 容器示例
+spec:
+  driver: docker
+  docker:
+    container: nginx
+

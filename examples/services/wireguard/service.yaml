@@ -1,0 +1,36 @@
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata:
+  name: wireguard
+  description: WireGuard 接口、客户端和网络连接管理示例
+spec:
+  driver: wireguard
+  wireguard:
+    interfaces:
+      - name: wg0
+        role: server
+        config: config/wg0.conf
+        peerManagement:
+          addressPool: 10.10.0.0/24
+          publicEndpoint: vpn.example.com:51820
+          serverPublicKeyFile: secrets/wg0/public.key
+          defaultAccessProfile: linked-networks
+          accessProfiles:
+            server-only:
+              description: 仅访问云服务器
+              allowedIPs: [10.10.0.1/32]
+            linked-networks:
+              description: 访问另一端网络
+              allowedIPs: [10.10.0.0/24, 192.168.31.0/24, 192.168.7.0/24]
+      - name: wg1
+        role: client
+        config: config/wg1.conf
+    connections:
+      - name: wg0-to-wg1
+        from: wg0
+        to: wg1
+        sourceNetwork: 10.10.0.0/24
+        mode: masquerade
+        allowReturnTraffic: true
+        autoConnect: true
+

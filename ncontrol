@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+if [ ! -d "$root/local/services" ] && [ ! -d "$root/services" ]; then
+  mkdir -p "$root/local/services"
+fi
+
+python_bin="$root/.venv/bin/python"
+if [ ! -x "$python_bin" ]; then
+  python_bin="python3"
+fi
+
+needs_setup=0
+if ! "$python_bin" -c 'import psutil, textual, yaml' >/dev/null 2>&1; then
+  needs_setup=1
+fi
+if [ "$(uname -s 2>/dev/null || true)" = "Linux" ]; then
+  required_commands=(python3 node npm wg wg-quick iptables ip crontab ping)
+  if [ -d "$root/local/services/pairdrop" ] || [ -d "$root/local/services/beszel" ] || \
+     [ -d "$root/services/pairdrop" ] || [ -d "$root/services/beszel" ]; then
+    required_commands+=(docker)
+  fi
+  for command in "${required_commands[@]}"; do
+    command -v "$command" >/dev/null 2>&1 || needs_setup=1
+  done
+fi
+if [ "$needs_setup" -eq 1 ]; then
+  if [ "$(uname -s 2>/dev/null || true)" = "Linux" ] && [ -f "$root/setup-ubuntu.sh" ]; then
+    echo "检测到这是首次运行或系统环境不完整，正在进入初始化准备…"
+    exec bash "$root/setup-ubuntu.sh" --prepare-only
+  fi
+  echo "缺少 NControl 依赖；请执行 bootstrap.cmd 或 bootstrap.sh" >&2
+  exit 2
+fi
+
+if [ -n "${PYTHONPATH:-}" ]; then
+  export PYTHONPATH="$root/src:$PYTHONPATH"
+else
+  export PYTHONPATH="$root/src"
+fi
+
+if [ "$#" -eq 0 ] && [ -f /etc/machine-id ]; then
+  state_root="$root"
+  [ -d "$root/local/services" ] && state_root="$root/local"
+  marker="$state_root/.ncontrol/machine-id"
+  current_machine="$(tr -d '\r\n' < /etc/machine-id)"
+  saved_machine=""
+  [ -f "$marker" ] && saved_machine="$(tr -d '\r\n' < "$marker")"
+  if [ "$current_machine" != "$saved_machine" ]; then
+    set -- tui --migration
+  fi
+fi
+
+exec "$python_bin" -m homelabctl --root "$root" "$@"

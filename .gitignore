@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.tmp/
+.test-tmp/
+.coverage
+.codex-access/
+.env
+*.key
+*.pem
+local/
+services/*/data/
+services/*/backup/
+

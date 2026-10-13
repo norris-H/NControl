@@ -1,0 +1,14 @@
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata:
+  name: frp
+  description: FRP 配置管理示例（本阶段只读）
+spec:
+  driver: frp
+  frp:
+    role: server
+    config: config/frps.toml
+  config:
+    files:
+      - config/frps.toml
+

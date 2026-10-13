@@ -1,0 +1,11 @@
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata:
+  name: systemd-service
+  description: systemd 服务示例
+spec:
+  driver: systemd
+  systemd:
+    unit: frps.service
+    user: false
+
