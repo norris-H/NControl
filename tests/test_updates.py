@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import io
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import URLError
 
 from homelabctl.errors import HomelabError
 from homelabctl.updates import (
     FALLBACK_REPOSITORY_URL,
     _fetch_updates,
+    _official_revision,
     _uses_official_repository,
     _verify_official_target,
     apply_update,
@@ -30,6 +33,17 @@ def run_git(directory: Path, *arguments: str) -> None:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_official_revision_retries_transient_failure(self):
+        revision = "a" * 40
+        response = io.BytesIO(f'{{"sha":"{revision}"}}'.encode())
+        with patch(
+            "homelabctl.updates.urlopen",
+            side_effect=[URLError("temporary"), response],
+        ) as open_url, patch("homelabctl.updates.time.sleep") as sleep:
+            self.assertEqual(_official_revision(timeout=1), revision)
+        self.assertEqual(open_url.call_count, 2)
+        sleep.assert_called_once_with(1)
+
     def test_fetch_falls_back_without_changing_origin(self):
         completed = subprocess.CompletedProcess(("git",), 0, "", "")
         with patch(

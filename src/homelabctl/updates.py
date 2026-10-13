@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -71,7 +72,7 @@ def _uses_official_repository(remote_url: str) -> bool:
     return OFFICIAL_REPOSITORY.lower() in normalized
 
 
-def _official_revision(*, timeout: float = 10) -> str:
+def _official_revision(*, timeout: float = 10, attempts: int = 3) -> str:
     request = Request(
         OFFICIAL_COMMIT_API,
         headers={
@@ -80,17 +81,23 @@ def _official_revision(*, timeout: float = 10) -> str:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
-        raise HomelabError(
-            "无法通过 GitHub 官方 API 校验更新；为保证安全，已停止更新"
-        ) from exc
-    revision = payload.get("sha") if isinstance(payload, dict) else None
-    if not isinstance(revision, str) or len(revision) != 40:
-        raise HomelabError("GitHub 官方 API 返回了无法识别的提交编号")
-    return revision
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+            revision = payload.get("sha") if isinstance(payload, dict) else None
+            if not isinstance(revision, str) or len(revision) != 40:
+                raise ValueError("无法识别的提交编号")
+            return revision
+        except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            last_error = exc
+            if attempt + 1 < max(1, attempts):
+                time.sleep(attempt + 1)
+    raise HomelabError(
+        f"连续 {max(1, attempts)} 次无法通过 GitHub 官方 API 校验更新；"
+        "为保证安全，已停止更新，请稍后重试"
+    ) from last_error
 
 
 def _verify_official_target(target: str) -> None:
