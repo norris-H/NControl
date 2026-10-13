@@ -19,20 +19,31 @@ class UpdateInfo:
     detail: str = ""
 
 
-def _git(root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def _git(
+    root: Path,
+    *arguments: str,
+    check: bool = True,
+    timeout: float = 30,
+) -> subprocess.CompletedProcess[str]:
     if shutil.which("git") is None:
         raise HomelabError("系统未安装 Git，无法检查 NControl 更新")
-    completed = subprocess.run(
-        ("git", *arguments),
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        shell=False,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            ("git", *arguments),
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HomelabError(
+            f"Git 操作超过 {int(timeout)} 秒；当前服务器可能无法连接 GitHub"
+        ) from exc
     if check and completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise HomelabError(f"Git 操作失败：{detail or completed.returncode}")
@@ -53,7 +64,7 @@ def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
         raise HomelabError("当前目录不是有效的 Git 工作目录")
     remote_url = _git(root, "remote", "get-url", "origin").stdout.strip()
     if fetch:
-        _git(root, "fetch", "--quiet", "origin", "main")
+        _git(root, "fetch", "--quiet", "origin", "main", timeout=20)
 
     current = _revision(root, "HEAD")
     target = _revision(root, "origin/main")

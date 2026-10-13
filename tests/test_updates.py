@@ -4,6 +4,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from homelabctl.errors import HomelabError
 from homelabctl.updates import apply_update, check_for_updates
@@ -22,6 +23,17 @@ def run_git(directory: Path, *arguments: str) -> None:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_network_timeout_has_clear_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".git").mkdir()
+            with patch(
+                "homelabctl.updates.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(("git", "fetch"), 20),
+            ):
+                with self.assertRaisesRegex(HomelabError, "无法连接 GitHub"):
+                    check_for_updates(root)
+
     def _repositories(self, root: Path) -> tuple[Path, Path]:
         remote = root / "remote.git"
         seed = root / "seed"
