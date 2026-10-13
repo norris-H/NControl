@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from homelabctl.errors import HomelabError
 from homelabctl.updates import (
+    FALLBACK_REPOSITORY_URL,
+    _fetch_updates,
     _uses_official_repository,
     _verify_official_target,
     apply_update,
@@ -28,6 +30,33 @@ def run_git(directory: Path, *arguments: str) -> None:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_fetch_falls_back_without_changing_origin(self):
+        completed = subprocess.CompletedProcess(("git",), 0, "", "")
+        with patch(
+            "homelabctl.updates._git",
+            side_effect=[HomelabError("direct unavailable"), completed],
+        ) as git:
+            used_fallback = _fetch_updates(
+                Path("."),
+                "https://github.com/norris-H/NControl.git",
+            )
+        self.assertTrue(used_fallback)
+        self.assertEqual(git.call_count, 2)
+        self.assertEqual(git.call_args_list[1].args[3], FALLBACK_REPOSITORY_URL)
+        self.assertIn(
+            "main:refs/remotes/origin/main",
+            git.call_args_list[1].args,
+        )
+
+    def test_unrelated_repository_does_not_use_ncontrol_fallback(self):
+        with patch(
+            "homelabctl.updates._git",
+            side_effect=HomelabError("direct unavailable"),
+        ) as git:
+            with self.assertRaisesRegex(HomelabError, "direct unavailable"):
+                _fetch_updates(Path("."), "https://example.test/project.git")
+        self.assertEqual(git.call_count, 1)
+
     def test_official_repository_is_detected_inside_proxy_url(self):
         self.assertTrue(
             _uses_official_repository(

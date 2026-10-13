@@ -15,6 +15,9 @@ OFFICIAL_REPOSITORY = "norris-H/NControl"
 OFFICIAL_COMMIT_API = (
     f"https://api.github.com/repos/{OFFICIAL_REPOSITORY}/commits/main"
 )
+FALLBACK_REPOSITORY_URL = (
+    f"https://gh-proxy.org/https://github.com/{OFFICIAL_REPOSITORY}.git"
+)
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,30 @@ def _verify_official_target(target: str) -> None:
         )
 
 
+def _fetch_updates(root: Path, remote_url: str) -> bool:
+    """Fetch origin/main and return whether the verified fallback was used."""
+    try:
+        _git(root, "fetch", "--quiet", "origin", "main", timeout=8)
+        return False
+    except HomelabError as direct_error:
+        if not _uses_official_repository(remote_url):
+            raise
+        try:
+            _git(
+                root,
+                "fetch",
+                "--quiet",
+                FALLBACK_REPOSITORY_URL,
+                "main:refs/remotes/origin/main",
+                timeout=20,
+            )
+        except HomelabError as fallback_error:
+            raise HomelabError(
+                "GitHub 直连和备用加速入口均不可用，无法检查更新"
+            ) from fallback_error
+        return True
+
+
 def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
     root = root.resolve()
     if not (root / ".git").exists():
@@ -107,8 +134,9 @@ def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
     if inside != "true":
         raise HomelabError("当前目录不是有效的 Git 工作目录")
     remote_url = _git(root, "remote", "get-url", "origin").stdout.strip()
+    used_fallback = False
     if fetch:
-        _git(root, "fetch", "--quiet", "origin", "main", timeout=20)
+        used_fallback = _fetch_updates(root, remote_url)
 
     current = _revision(root, "HEAD")
     target = _revision(root, "origin/main")
@@ -148,6 +176,8 @@ def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
     else:
         state = "current"
         detail = "当前已经是最新版本"
+    if used_fallback:
+        detail += "（GitHub 直连失败，已通过备用入口完成校验）"
     return UpdateInfo(state, current, target, ahead, behind, remote_url, detail)
 
 
