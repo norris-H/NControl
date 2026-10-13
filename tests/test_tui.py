@@ -81,6 +81,13 @@ class TuiTests(unittest.TestCase):
                         "默认关闭",
                         str(app.screen.query_one("#web-summary", Static).render()),
                     )
+                    await pilot.click("#web-enable")
+                    await app.workers.wait_for_complete()
+                    self.assertTrue(
+                        yaml.safe_load((Path(temp) / "web.yaml").read_text(encoding="utf-8"))[
+                            "enabled"
+                        ]
+                    )
                     app.screen.dismiss(None)
 
             asyncio.run(scenario())

@@ -2347,7 +2347,7 @@ class WebManagerScreen(ModalScreen[None]):
             if action == "enable":
                 bind = self.query_one("#web-bind", Input).value.strip()
                 port = int(self.query_one("#web-port", Input).value)
-                revealed = await asyncio.to_thread(web_enable, self.root_path, bind, port)
+                revealed = await asyncio.to_thread(enable_web, self.root_path, bind, port)
             elif action == "start":
                 await asyncio.to_thread(start_web, self.root_path)
             elif action == "stop":
