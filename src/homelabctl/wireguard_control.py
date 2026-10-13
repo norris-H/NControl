@@ -101,6 +101,33 @@ def _sudo_prefix(service: ServiceDefinition) -> tuple[str, ...]:
     return ("sudo", "-n") if _section(service).get("sudo", True) else ()
 
 
+def _wg_show(
+    service: ServiceDefinition,
+    interface_name: str,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    result = _run(
+        (*_sudo_prefix(service), "wg", "show", interface_name, *arguments)
+    )
+    if result.returncode == 0:
+        return result
+    detail = (result.stderr or result.stdout).strip()
+    normalized = detail.lower()
+    permission_markers = (
+        "password is required",
+        "a terminal is required",
+        "not in the sudoers",
+        "not allowed to execute",
+        "permission denied",
+    )
+    if _sudo_prefix(service) and any(marker in normalized for marker in permission_markers):
+        raise HomelabError(
+            "NControl 没有 WireGuard 免交互权限；请返回主界面按 M，"
+            "再按 W 配置 WireGuard 主机"
+        )
+    return result
+
+
 def _sync_peer_route(
     service: ServiceDefinition,
     interface_name: str,
@@ -259,7 +286,7 @@ def connection_status(service: ServiceDefinition, name: str, *, quiet: bool = Fa
 def connect(service: ServiceDefinition, name: str) -> None:
     connection = _connection(service, name)
     for interface_name in (str(connection["from"]), str(connection["to"])):
-        result = _run((*_sudo_prefix(service), "wg", "show", interface_name))
+        result = _wg_show(service, interface_name)
         if result.returncode != 0:
             raise HomelabError(f"接口 {interface_name} 未运行，已阻止建立连接")
     try:
@@ -515,7 +542,7 @@ def _start_new_interface(
     interface_name: str,
     config_path: Path,
 ) -> str | None:
-    running = _run((*_sudo_prefix(service), "wg", "show", interface_name))
+    running = _wg_show(service, interface_name)
     if running.returncode == 0:
         return None
     result = _run((*_sudo_prefix(service), "wg-quick", "up", str(config_path)))
@@ -531,10 +558,44 @@ def interface_status(
     quiet: bool = False,
 ) -> bool:
     _interface(service, interface_name)
-    running = _run((*_sudo_prefix(service), "wg", "show", interface_name)).returncode == 0
+    running = _wg_show(service, interface_name).returncode == 0
     if not quiet:
         print(f"接口 {interface_name}: {'已连接' if running else '已断开'}")
     return running
+
+
+def sync_interface_runtime(service: ServiceDefinition, interface_name: str) -> int:
+    """Apply persistent server peers to a live interface without restarting it."""
+    interface = _interface(service, interface_name)
+    if interface.get("role") != "server":
+        raise HomelabError("只能同步服务端接口的客户端配置")
+    if _wg_show(service, interface_name).returncode != 0:
+        raise HomelabError(f"WireGuard 服务端 {interface_name} 尚未运行")
+
+    config_path = _service_path(service, str(interface["config"]))
+    _, peers = parse_wireguard_config(config_path)
+    for peer in peers:
+        command = (
+            *_sudo_prefix(service),
+            "wg",
+            "set",
+            interface_name,
+            "peer",
+            peer.public_key,
+            "allowed-ips",
+            ",".join(peer.allowed_ips),
+        )
+        if peer.persistent_keepalive:
+            command = (
+                *command,
+                "persistent-keepalive",
+                peer.persistent_keepalive,
+            )
+        _run(command, check=True)
+        for allowed_ip in peer.allowed_ips:
+            _sync_peer_route(service, interface_name, allowed_ip)
+    print(f"服务端 {interface_name} 已同步 {len(peers)} 个客户端到运行接口")
+    return len(peers)
 
 
 def start_interface(service: ServiceDefinition, interface_name: str) -> None:
@@ -542,7 +603,7 @@ def start_interface(service: ServiceDefinition, interface_name: str) -> None:
     if interface.get("role") != "server":
         raise HomelabError("此操作只用于单独控制服务端接口")
     if interface_status(service, interface_name, quiet=True):
-        print(f"WireGuard 服务端 {interface_name} 已连接")
+        sync_interface_runtime(service, interface_name)
         return
     config_path = _service_path(service, str(interface["config"]))
     result = _run((*_sudo_prefix(service), "wg-quick", "up", str(config_path)))
@@ -577,7 +638,7 @@ def traffic_snapshot(service: ServiceDefinition) -> dict[str, Any]:
     interfaces: list[dict[str, Any]] = []
     for interface in _interfaces(service):
         name = str(interface["name"])
-        result = _run((*_sudo_prefix(service), "wg", "show", name, "dump"))
+        result = _wg_show(service, name, "dump")
         item: dict[str, Any] = {
             "name": name,
             "running": result.returncode == 0,
@@ -1223,7 +1284,7 @@ def edit_server_interface(
             )
         client_updates[client_path] = (original_client, updated_client)
 
-    was_running = _run((*_sudo_prefix(service), "wg", "show", interface_name)).returncode == 0
+    was_running = _wg_show(service, interface_name).returncode == 0
     if was_running:
         down = _run((*_sudo_prefix(service), "wg-quick", "down", str(config_path)))
         if down.returncode != 0:
@@ -1286,7 +1347,7 @@ def _delete_interface(
         raise HomelabError("WireGuard 服务至少要保留一个接口")
 
     config_path = _service_path(service, str(interface["config"]))
-    was_running = _run((*_sudo_prefix(service), "wg", "show", interface_name)).returncode == 0
+    was_running = _wg_show(service, interface_name).returncode == 0
     if was_running:
         down = _run((*_sudo_prefix(service), "wg-quick", "down", str(config_path)))
         if down.returncode != 0:
@@ -1440,9 +1501,7 @@ def _server_public_key(
             raise HomelabError("无法读取服务端公钥文件") from exc
         if key:
             return key
-    result = _run(
-        (*_sudo_prefix(service), "wg", "show", str(interface["name"]), "public-key")
-    )
+    result = _wg_show(service, str(interface["name"]), "public-key")
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     raise HomelabError("无法取得服务端公钥；请配置 serverPublicKeyFile")
@@ -1547,7 +1606,7 @@ def add_peer(
         client_path.unlink(missing_ok=True)
         raise
 
-    runtime = _run((*_sudo_prefix(service), "wg", "show", interface_name))
+    runtime = _wg_show(service, interface_name)
     if runtime.returncode == 0:
         command = (
             *_sudo_prefix(service),
@@ -1597,7 +1656,7 @@ def remove_peer(service: ServiceDefinition, interface_name: str, peer_id: str) -
     _atomic_write(config_path, updated)
 
     public_key = str(record["publicKey"])
-    runtime = _run((*_sudo_prefix(service), "wg", "show", interface_name))
+    runtime = _wg_show(service, interface_name)
     if runtime.returncode == 0:
         try:
             _run(
@@ -1692,7 +1751,12 @@ def _parser() -> argparse.ArgumentParser:
     for operation in ("connection-status", "connect", "disconnect", "adopt-connection"):
         command = sub.add_parser(operation)
         command.add_argument("name")
-    for operation in ("interface-status", "start-interface", "stop-interface"):
+    for operation in (
+        "interface-status",
+        "start-interface",
+        "stop-interface",
+        "sync-interface",
+    ):
         command = sub.add_parser(operation)
         command.add_argument("interface")
     traffic = sub.add_parser("traffic")
@@ -1787,6 +1851,8 @@ def main(argv: list[str] | None = None) -> int:
             start_interface(service, args.interface)
         elif args.operation == "stop-interface":
             stop_interface(service, args.interface)
+        elif args.operation == "sync-interface":
+            sync_interface_runtime(service, args.interface)
         elif args.operation == "create-server":
             create_server_interface(
                 service,

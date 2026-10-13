@@ -9,6 +9,7 @@ from unittest.mock import patch
 import yaml
 
 from homelabctl.config import load_service
+from homelabctl.errors import HomelabError
 from homelabctl.wireguard_control import (
     _rule_specs,
     _legacy_rule,
@@ -31,6 +32,7 @@ from homelabctl.wireguard_control import (
     render_terminal_qr,
     start_interface,
     stop_interface,
+    sync_interface_runtime,
     traffic_snapshot,
 )
 
@@ -412,6 +414,53 @@ class WireGuardControlTests(unittest.TestCase):
         config_path = str(directory / "config" / "wg0.conf")
         self.assertIn(("sudo", "-n", "wg-quick", "up", config_path), calls)
         self.assertIn(("sudo", "-n", "wg-quick", "down", config_path), calls)
+
+    def test_sync_interface_applies_persistent_peers_without_restart(self):
+        service, _ = self._service()
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(argv, *, input_text=None, check=False):
+            values = tuple(argv)
+            calls.append(values)
+            return subprocess.CompletedProcess(values, 0, "", "")
+
+        with patch("homelabctl.wireguard_control._run", side_effect=fake_run):
+            count = sync_interface_runtime(service, "wg0")
+
+        self.assertEqual(count, 1)
+        self.assertIn(
+            (
+                "sudo",
+                "-n",
+                "wg",
+                "set",
+                "wg0",
+                "peer",
+                "existing-public",
+                "allowed-ips",
+                "10.10.0.2/32",
+                "persistent-keepalive",
+                "25",
+            ),
+            calls,
+        )
+        self.assertNotIn("wg-quick", {value for call in calls for value in call})
+
+    def test_sudo_failure_is_not_reported_as_disconnected(self):
+        service, _ = self._service()
+
+        def fake_run(argv, *, input_text=None, check=False):
+            values = tuple(argv)
+            return subprocess.CompletedProcess(
+                values,
+                1,
+                "",
+                "sudo: a password is required",
+            )
+
+        with patch("homelabctl.wireguard_control._run", side_effect=fake_run):
+            with self.assertRaisesRegex(HomelabError, "按 M.*按 W"):
+                interface_status(service, "wg0", quiet=True)
 
     def test_traffic_snapshot_reports_peer_and_connection_counters(self):
         service, _ = self._service()

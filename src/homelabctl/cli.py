@@ -82,7 +82,12 @@ def build_parser() -> argparse.ArgumentParser:
         command = wireguard_sub.add_parser(command_name)
         command.add_argument("service")
         command.add_argument("connection")
-    for command_name in ("interface-status", "start-interface", "stop-interface"):
+    for command_name in (
+        "interface-status",
+        "start-interface",
+        "stop-interface",
+        "sync-interface",
+    ):
         command = wireguard_sub.add_parser(command_name)
         command.add_argument("service")
         command.add_argument("interface")
@@ -341,7 +346,12 @@ def run(args: argparse.Namespace) -> int:
             operation = (command, args.name)
         elif command in {"connection-status", "connect", "disconnect", "adopt-connection"}:
             operation = (command, args.connection)
-        elif command in {"interface-status", "start-interface", "stop-interface"}:
+        elif command in {
+            "interface-status",
+            "start-interface",
+            "stop-interface",
+            "sync-interface",
+        }:
             operation = (command, args.interface)
         elif command in {"peers", "import-peers"}:
             operation = (command, args.interface)

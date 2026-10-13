@@ -662,6 +662,7 @@ class WireGuardManagerScreen(ModalScreen[None]):
         Binding("a", "add_selected", "添加", priority=True),
         Binding("i", "import_peers", "识别已有客户端", priority=True),
         Binding("c", "connect_selected", "连接", priority=True),
+        Binding("y", "sync_interface", "同步配置", priority=True),
         Binding("x", "disconnect_or_delete_connection", "断开或删除", priority=True),
         Binding("d", "delete_or_disconnect", "删除或断开", priority=True),
         Binding("m", "adopt_connection", "接管旧规则", priority=True),
@@ -992,6 +993,8 @@ class WireGuardManagerScreen(ModalScreen[None]):
                     0,
                     "X 断开服务端" if state == "connected" else "C 连接服务端",
                 )
+                if state == "connected":
+                    interface_actions.insert(1, "Y 同步配置")
                 actions[0:0] = interface_actions
             elif selected.get("role") == "client":
                 actions.insert(0, "D 删除客户端")
@@ -1186,6 +1189,16 @@ class WireGuardManagerScreen(ModalScreen[None]):
             self.run_management("start-interface", name)
         elif selected and selected.get("kind") == "connection":
             self.action_connect()
+
+    def action_sync_interface(self) -> None:
+        selected = self._selected("interface")
+        if not selected or not isinstance(selected.get("peerManagement"), dict):
+            return
+        name = str(selected["name"])
+        if self.interface_states.get(name) != "connected":
+            self._write(f"[yellow]服务端 {escape(name)} 尚未连接，不能同步配置。[/yellow]")
+            return
+        self.run_management("sync-interface", name)
 
     def action_disconnect_or_delete_connection(self) -> None:
         selected = self._selected()
@@ -1562,15 +1575,24 @@ class WireGuardManagerScreen(ModalScreen[None]):
             try:
                 driver = get_driver(self.service)
                 plan = driver.management_plan("interface-status", name)
-                code, _ = await self.app._run_plans([plan], timeout=12)
+                code, output = await self.app._run_plans([plan], timeout=12)
                 if not self.is_mounted:
                     return
-                running = code == 0
-                self.interface_states[name] = "connected" if running else "disconnected"
+                if code == 0:
+                    state = "connected"
+                    status = Text("已连接", style="green")
+                elif code == 3:
+                    state = "disconnected"
+                    status = Text("已断开", style="yellow")
+                else:
+                    state = "unknown"
+                    label = "! 权限不足" if "免交互权限" in output else "! 不可用"
+                    status = Text(label, style="red")
+                self.interface_states[name] = state
                 table.update_cell(
                     key,
                     "status",
-                    Text("已连接", style="green") if running else Text("已断开", style="yellow"),
+                    status,
                 )
                 self._update_action_bar()
             except (UnsupportedOperation, HomelabError, OSError):
