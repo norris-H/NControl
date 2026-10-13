@@ -1958,7 +1958,7 @@ class MigrationScreen(ModalScreen[None]):
         if not host:
             self._write("[yellow]请先填写新的公网 IP 或域名。[/yellow]")
             return
-        self.push_screen(
+        self.app.push_screen(
             ConfirmActionScreen(
                 "更新 WireGuard 公网入口",
                 f"将服务端入口和本地客户端配置更新为 {host}。继续吗？",
@@ -1983,7 +1983,7 @@ class MigrationScreen(ModalScreen[None]):
         self.refresh_checks()
 
     def action_configure_wireguard(self) -> None:
-        self.push_screen(
+        self.app.push_screen(
             ConfirmActionScreen(
                 "配置 WireGuard 主机",
                 "将开启并持久化 IPv4 转发，同时安装限定范围的免交互 sudo 权限。继续吗？",
@@ -2014,7 +2014,7 @@ class MigrationScreen(ModalScreen[None]):
         self.refresh_checks()
 
     def action_start_services(self) -> None:
-        self.push_screen(
+        self.app.push_screen(
             ConfirmActionScreen(
                 "启动自动服务",
                 "将启动已启用开机启动但目前未运行的服务。继续吗？",
@@ -2037,7 +2037,7 @@ class MigrationScreen(ModalScreen[None]):
         self.refresh_checks()
 
     def action_initialize(self) -> None:
-        self.push_screen(
+        self.app.push_screen(
             ConfirmActionScreen(
                 "一键初始化新服务器",
                 "将更新填写的公网入口、配置 WireGuard 主机、注册开机入口并启动自动服务。继续吗？",

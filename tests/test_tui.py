@@ -107,6 +107,24 @@ class TuiTests(unittest.TestCase):
 
             asyncio.run(scenario())
 
+    def test_migration_wireguard_action_opens_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SERVICE, encoding="utf-8")
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False, open_migration=True)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, MigrationScreen)
+                    await pilot.press("w")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ConfirmActionScreen)
+                    app.screen.dismiss(False)
+
+            asyncio.run(scenario())
+
     def test_dashboard_shows_autostart_service(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "services" / "web" / "service.yaml"
