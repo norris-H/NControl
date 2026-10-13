@@ -219,6 +219,37 @@ spec:
 
             asyncio.run(scenario())
 
+    def test_clear_logs_requires_confirmation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                """\
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata: {name: web, description: Test service}
+spec:
+  driver: process
+  process:
+    command: ["{python}", -c, "print('ready')"]
+""",
+                encoding="utf-8",
+            )
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.press("k")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ConfirmActionScreen)
+                    self.assertEqual(
+                        app.screen.query_one("#confirm", Button).label.plain,
+                        "清空日志",
+                    )
+                    app.screen.dismiss(False)
+
+            asyncio.run(scenario())
+
     def test_wireguard_manager_opens_add_peer_form(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / "services" / "wireguard"

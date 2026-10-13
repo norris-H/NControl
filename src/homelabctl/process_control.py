@@ -311,11 +311,25 @@ def logs(service: ServiceDefinition, *, tail: int, follow: bool) -> int:
                 time.sleep(0.25)
 
 
+def clear_logs(service: ServiceDefinition) -> int:
+    path = _log_path(service)
+    if not path.exists():
+        print(f"{service.name} 暂无日志")
+        return 0
+    try:
+        with path.open("w", encoding="utf-8"):
+            pass
+    except OSError as exc:
+        raise HomelabError(f"{service.name}: 清空日志失败: {exc}") from exc
+    print(f"{service.name} 日志已清空")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="homelabctl.process_control")
     parser.add_argument(
         "operation",
-        choices=("prepare", "start", "stop", "restart", "status", "logs"),
+        choices=("prepare", "start", "stop", "restart", "status", "logs", "clear-logs"),
     )
     parser.add_argument("service_file", type=Path)
     parser.add_argument("--tail", type=int, default=100)
@@ -338,6 +352,8 @@ def run(args: argparse.Namespace) -> int:
         return start(service)
     if args.operation == "status":
         return status(service)
+    if args.operation == "clear-logs":
+        return clear_logs(service)
     return logs(service, tail=args.tail, follow=args.follow)
 
 

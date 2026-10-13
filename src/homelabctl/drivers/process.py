@@ -35,3 +35,17 @@ class ProcessDriver(Driver):
         files = self.service.spec["process"].get("environmentFromFiles", {})
         values.extend(str(value) for value in files.values())
         return values
+
+    def clear_log_plans(self) -> list[CommandPlan]:
+        return [
+            CommandPlan(
+                argv=(
+                    sys.executable,
+                    "-m",
+                    "homelabctl.process_control",
+                    "clear-logs",
+                    str(self.service.path),
+                ),
+                cwd=self.cwd,
+            )
+        ]

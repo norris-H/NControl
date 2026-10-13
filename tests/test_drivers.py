@@ -197,6 +197,26 @@ spec:
         argv = get_driver(service).plans("stop")[0].argv
         self.assertEqual(argv[0], sys.executable)
         self.assertEqual(argv[1:4], ("-m", "homelabctl.process_control", "stop"))
+        clear_argv = get_driver(service).clear_log_plans()[0].argv
+        self.assertEqual(
+            clear_argv[1:4],
+            ("-m", "homelabctl.process_control", "clear-logs"),
+        )
+
+    def test_script_driver_accepts_an_optional_clear_logs_command(self):
+        service = self._service("""\
+apiVersion: homelabctl/v1alpha1
+kind: Service
+metadata: {name: custom}
+spec:
+  driver: script
+  script:
+    commands:
+      logs: [tail, -n, "200", logs/service.log]
+      clearLogs: [truncate, -s, "0", logs/service.log]
+""")
+        argv = get_driver(service).clear_log_plans()[0].argv
+        self.assertEqual(argv, ("truncate", "-s", "0", "logs/service.log"))
 
 
 if __name__ == "__main__":

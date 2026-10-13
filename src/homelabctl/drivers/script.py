@@ -29,6 +29,16 @@ class ScriptDriver(Driver):
         }
         return [tokens.get(value, value) for value in command]
 
+    def clear_log_plans(self) -> list[CommandPlan]:
+        value: Any = self.service.spec["script"]["commands"].get("clearLogs")
+        if value is None:
+            return super().clear_log_plans()
+        commands = self._normalize(value, "clearLogs")
+        return [
+            CommandPlan(argv=tuple(self._expand(command)), cwd=self.cwd)
+            for command in commands
+        ]
+
     def _normalize(self, value: Any, operation: str) -> list[list[str]]:
         if isinstance(value, list) and value and all(isinstance(item, str) for item in value):
             return [value]

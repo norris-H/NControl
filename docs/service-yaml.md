@@ -171,9 +171,11 @@ spec:
         - ["./bin/app", "start"]
       status: ["./bin/app", "status"]
       logs: ["./bin/app", "logs"]
+      clearLogs: ["./bin/app", "clear-logs"]
 ```
 
 命令必须是参数数组；不会解析 `|`、`>`、`&&` 等 shell 语法。
+`clearLogs` 是可选的；配置后，TUI 才会允许清空该脚本服务的日志。
 
 ## FRP / WireGuard
 

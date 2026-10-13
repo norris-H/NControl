@@ -2219,6 +2219,7 @@ class NControlApp(App[None]):
         Binding("x", "stop_service", "停止服务"),
         Binding("enter", "details", "服务详情"),
         Binding("l", "logs", "刷新日志"),
+        Binding("k", "clear_logs", "清空日志"),
         Binding("c", "check_config", "配置检查"),
         Binding("d", "doctor", "系统检查"),
         Binding("a", "toggle_autostart", "切换开机启动"),
@@ -2606,6 +2607,31 @@ class NControlApp(App[None]):
         if service:
             self.load_logs(service)
 
+    def action_clear_logs(self) -> None:
+        service = self._selected_service()
+        if service is None:
+            return
+        try:
+            get_driver(service).clear_log_plans()
+        except UnsupportedOperation as exc:
+            self.notify(str(exc), severity="warning")
+            return
+        self.push_screen(
+            ConfirmActionScreen(
+                "清空服务日志",
+                f"将清空 {service.name} 的已有日志，此操作无法撤销。",
+                "清空日志",
+            ),
+            self._clear_logs_confirmed,
+        )
+
+    def _clear_logs_confirmed(self, confirmed: bool) -> None:
+        if not confirmed:
+            return
+        service = self._selected_service()
+        if service:
+            self.clear_service_logs(service)
+
     def action_wireguard(self) -> None:
         service = self._selected_service()
         if not service or service.driver != "wireguard":
@@ -2730,6 +2756,28 @@ class NControlApp(App[None]):
             return
         color = "white" if code == 0 else "red"
         self._replace_service_logs(service, output or "(暂无日志输出)", color=color)
+
+    @work(exclusive=True, group="clear-logs")
+    async def clear_service_logs(self, service: ServiceDefinition) -> None:
+        self.workers.cancel_group(self, "logs")
+        try:
+            plans = get_driver(service).clear_log_plans()
+            code, output = await self._run_plans(plans, timeout=20)
+        except UnsupportedOperation as exc:
+            self.notify(str(exc), severity="warning")
+            return
+        except (HomelabError, OSError) as exc:
+            self._replace_service_logs(service, str(exc), color="red")
+            return
+        if code == 0:
+            self._replace_service_logs(service, "日志已清空。", color="green")
+            self.notify(f"{service.name} 日志已清空")
+            return
+        self._replace_service_logs(
+            service,
+            output or f"清空日志失败（退出码 {code}）",
+            color="red",
+        )
 
     async def _run_plans(
         self,

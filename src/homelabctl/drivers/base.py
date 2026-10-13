@@ -28,6 +28,11 @@ class Driver(ABC):
             raise UnsupportedOperation(f"{self.service.name}: spec.config.files 必须是字符串数组")
         return list(files)
 
+    def clear_log_plans(self) -> list[CommandPlan]:
+        raise UnsupportedOperation(
+            f"{self.service.name}: {self.service.driver} 驱动不支持单独清空日志"
+        )
+
     @property
     def cwd(self) -> Path:
         return self.service.working_directory
