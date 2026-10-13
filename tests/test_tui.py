@@ -25,6 +25,7 @@ from homelabctl.tui import (
     WireGuardQrScreen,
 )
 from homelabctl.updates import UpdateInfo
+from homelabctl.web_control import stop as stop_web
 
 
 SERVICE = """\
@@ -81,13 +82,22 @@ class TuiTests(unittest.TestCase):
                         "默认关闭",
                         str(app.screen.query_one("#web-summary", Static).render()),
                     )
-                    await pilot.click("#web-enable")
+                    await pilot.click("#web-apply")
                     await app.workers.wait_for_complete()
                     self.assertTrue(
                         yaml.safe_load((Path(temp) / "web.yaml").read_text(encoding="utf-8"))[
                             "enabled"
                         ]
                     )
+                    self.assertIn(
+                        "运行中",
+                        str(app.screen.query_one("#web-summary", Static).render()),
+                    )
+                    self.assertNotIn(
+                        "尚未生成",
+                        str(app.screen.query_one("#web-token-value", Static).render()),
+                    )
+                    await asyncio.to_thread(stop_web, Path(temp))
                     app.screen.dismiss(None)
 
             asyncio.run(scenario())

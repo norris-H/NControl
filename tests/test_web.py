@@ -13,11 +13,11 @@ import yaml
 
 from homelabctl.errors import HomelabError
 from homelabctl.web_control import (
+    apply_and_start,
     enable,
     load_config,
     read_token,
     rotate_token,
-    start,
     status,
     stop,
 )
@@ -79,9 +79,8 @@ class WebControlTests(unittest.TestCase):
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", 0))
                 port = int(probe.getsockname()[1])
-            first_token = enable(root, "127.0.0.1", port)
             try:
-                first = start(root)
+                first, first_token = apply_and_start(root, "127.0.0.1", port)
                 self.assertTrue(first.running)
                 connection = HTTPConnection("127.0.0.1", port, timeout=5)
                 connection.request("GET", "/login")
@@ -89,6 +88,17 @@ class WebControlTests(unittest.TestCase):
                 response.read()
                 connection.close()
                 self.assertEqual(response.status, 200)
+
+                with socket.socket() as second_probe:
+                    second_probe.bind(("127.0.0.1", 0))
+                    second_port = int(second_probe.getsockname()[1])
+                reapplied, same_token = apply_and_start(
+                    root, "127.0.0.1", second_port
+                )
+                self.assertTrue(reapplied.running)
+                self.assertEqual(same_token, first_token)
+                self.assertEqual(reapplied.port, second_port)
+                self.assertNotEqual(reapplied.pid, first.pid)
 
                 second_token = rotate_token(root)
                 second = status(root)

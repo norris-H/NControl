@@ -317,3 +317,31 @@ def disable(root: Path) -> WebStatus:
         },
     )
     return status(root)
+
+
+def apply_and_start(
+    root: Path,
+    bind: str = DEFAULT_BIND,
+    port: int = DEFAULT_PORT,
+) -> tuple[WebStatus, str]:
+    """Validate, save and start Web management as one recoverable operation."""
+    root = root.resolve()
+    _validate_endpoint(bind, port)
+    if bind not in _local_ipv4_addresses():
+        raise HomelabError(f"监听地址 {bind} 不是当前主机的 IPv4 地址")
+    previous = load_config(root)
+    was_running = _live_process(root) is not None
+    if was_running:
+        stop(root)
+    try:
+        token = enable(root, bind, port)
+        current = start(root)
+    except Exception:
+        _atomic_yaml(config_path(root), previous)
+        if was_running and previous["enabled"]:
+            try:
+                start(root)
+            except (HomelabError, OSError):
+                pass
+        raise
+    return current, token

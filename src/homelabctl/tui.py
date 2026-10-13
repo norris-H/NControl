@@ -50,10 +50,10 @@ from .migration import (
 from .security import check_config_paths
 from .updates import UpdateInfo, apply_update, check_for_updates
 from .web_control import (
+    apply_and_start as apply_and_start_web,
     disable as disable_web,
-    enable as enable_web,
+    read_token as read_web_token,
     rotate_token as rotate_web_token,
-    start as start_web,
     status as web_status,
     stop as stop_web,
 )
@@ -2185,34 +2185,28 @@ class WebManagerScreen(ModalScreen[None]):
     ]
 
     CSS = """
-    WebManagerScreen {
-        align: center middle;
-        background: $background 80%;
-    }
-
-    WebManagerScreen > Vertical {
-        width: 92%;
-        max-width: 88;
-        height: 92%;
-        max-height: 31;
-        padding: 1 2;
-        border: thick $accent;
-        background: $surface;
-    }
+    WebManagerScreen { layout: vertical; }
 
     WebManagerScreen #web-title {
-        height: 2;
+        height: 3;
+        padding: 1 2;
         text-style: bold;
-        color: $accent;
+        color: $text;
+        background: $primary;
+    }
+
+    WebManagerScreen #web-body {
+        height: 1fr;
+        padding: 1 2;
     }
 
     WebManagerScreen #web-summary {
-        height: 6;
-        margin-bottom: 1;
+        height: 4;
+        padding: 0 1;
     }
 
-    WebManagerScreen .web-field {
-        height: 5;
+    WebManagerScreen #web-settings {
+        height: 4;
     }
 
     WebManagerScreen .web-field Label {
@@ -2220,8 +2214,11 @@ class WebManagerScreen(ModalScreen[None]):
         color: $text-muted;
     }
 
+    WebManagerScreen #web-bind-field { width: 1fr; margin-right: 2; }
+    WebManagerScreen #web-port-field { width: 22; }
+
     WebManagerScreen #web-actions {
-        height: 5;
+        height: 3;
         align: left middle;
     }
 
@@ -2229,36 +2226,55 @@ class WebManagerScreen(ModalScreen[None]):
         margin-right: 1;
     }
 
+    WebManagerScreen #web-token-title {
+        height: 1;
+        color: $text-muted;
+    }
+
+    WebManagerScreen #web-token-value {
+        height: 3;
+        border: round $secondary;
+        padding: 0 2;
+        content-align: left middle;
+        color: $accent;
+        text-style: bold;
+    }
+
     WebManagerScreen #web-message {
         height: 1fr;
+        min-height: 3;
         border: round $secondary;
-        padding: 1;
-        overflow-y: auto;
+        padding: 1 2;
+        color: $text-muted;
     }
     """
 
     def __init__(self, root: Path) -> None:
         super().__init__()
         self.root_path = root.resolve()
+        self._running = False
+        self._enabled = False
 
     def compose(self) -> ComposeResult:
-        with Vertical():
-            yield Static("Web 管理（默认关闭）", id="web-title")
+        yield Static("Web 管理  ·  默认关闭，建议只通过 localhost 或 WireGuard 访问", id="web-title")
+        with VerticalScroll(id="web-body"):
             yield Static(id="web-summary", markup=True)
-            with Vertical(classes="web-field"):
-                yield Label("监听地址（只允许本机 IPv4；推荐 127.0.0.1 或 WireGuard 地址）")
-                yield Input(id="web-bind")
-            with Vertical(classes="web-field"):
-                yield Label("端口")
-                yield Input(id="web-port", type="integer")
+            yield Static("登录令牌（打开网页时使用）", id="web-token-title")
+            yield Static("尚未生成", id="web-token-value", markup=False)
+            with Horizontal(id="web-settings"):
+                with Vertical(id="web-bind-field", classes="web-field"):
+                    yield Label("监听地址（本机 IPv4；推荐 127.0.0.1 或 WireGuard 地址）")
+                    yield Input(id="web-bind")
+                with Vertical(id="web-port-field", classes="web-field"):
+                    yield Label("端口")
+                    yield Input(id="web-port", type="integer")
             with Horizontal(id="web-actions"):
-                yield Button("启用 / 保存", id="web-enable", variant="primary")
-                yield Button("启动", id="web-start", variant="success")
+                yield Button("启用并启动", id="web-apply", variant="primary")
                 yield Button("停止", id="web-stop", variant="warning")
                 yield Button("关闭功能", id="web-disable", variant="error")
                 yield Button("重置令牌", id="web-token")
             yield Static(
-                "网页不会自动开放公网，也不会随启用动作自动启动。",
+                "修改地址或端口后点击主按钮即可应用；如果 Web 正在运行，会自动安全重启。",
                 id="web-message",
                 markup=True,
             )
@@ -2281,24 +2297,32 @@ class WebManagerScreen(ModalScreen[None]):
         enabled = "[green]已启用[/green]" if current.enabled else "[dim]默认关闭[/dim]"
         running = "[green]运行中[/green]" if current.running else "[dim]未运行[/dim]"
         pid = f" · PID {current.pid}" if current.pid else ""
+        self._running = current.running
+        self._enabled = current.enabled
         self.query_one("#web-summary", Static).update(
-            f"功能状态    {enabled}\n运行状态    {running}{pid}\n访问地址    "
-            f"[cyan]{escape(current.url)}[/cyan]"
+            f"功能状态    {enabled}    运行状态    {running}{pid}\n"
+            f"访问地址    [cyan]{escape(current.url)}[/cyan]\n"
+            "说明        启动后使用下方令牌登录；配置和令牌只保存在本机 local/。"
         )
-        start = self.query_one("#web-start", Button)
+        apply = self.query_one("#web-apply", Button)
         stop = self.query_one("#web-stop", Button)
         disable = self.query_one("#web-disable", Button)
         token = self.query_one("#web-token", Button)
-        start.disabled = not current.enabled or current.running
+        if current.running:
+            apply.label = "应用设置并重启"
+        elif current.enabled:
+            apply.label = "启动"
+        else:
+            apply.label = "启用并启动"
         stop.disabled = not current.running
         disable.disabled = not current.enabled
         token.disabled = not current.enabled
-        if reveal_token:
-            self.query_one("#web-message", Static).update(
-                "[b green]登录令牌[/b green]\n"
-                f"[cyan]{escape(reveal_token)}[/cyan]\n\n"
-                "令牌保存在本机 local/secrets 中，不会同步到 GitHub。"
-            )
+        if reveal_token is None:
+            try:
+                reveal_token = read_web_token(self.root_path)
+            except HomelabError:
+                reveal_token = "尚未生成；点击“启用并启动”后会自动生成"
+        self.query_one("#web-token-value", Static).update(reveal_token)
 
     def action_refresh(self) -> None:
         self.refresh_view(populate=True)
@@ -2306,10 +2330,8 @@ class WebManagerScreen(ModalScreen[None]):
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
         action = event.button.id
-        if action == "web-enable":
-            self.apply_operation("enable")
-        elif action == "web-start":
-            self.apply_operation("start")
+        if action == "web-apply":
+            self.apply_operation("apply")
         elif action == "web-stop":
             self.app.push_screen(
                 ConfirmActionScreen(
@@ -2344,20 +2366,28 @@ class WebManagerScreen(ModalScreen[None]):
         message.update("[cyan]正在处理…[/cyan]")
         try:
             revealed: str | None = None
-            if action == "enable":
+            if action == "apply":
                 bind = self.query_one("#web-bind", Input).value.strip()
                 port = int(self.query_one("#web-port", Input).value)
-                revealed = await asyncio.to_thread(enable_web, self.root_path, bind, port)
-            elif action == "start":
-                await asyncio.to_thread(start_web, self.root_path)
+                _, revealed = await asyncio.to_thread(
+                    apply_and_start_web,
+                    self.root_path,
+                    bind,
+                    port,
+                )
             elif action == "stop":
                 await asyncio.to_thread(stop_web, self.root_path)
             elif action == "disable":
                 await asyncio.to_thread(disable_web, self.root_path)
             elif action == "token":
                 revealed = await asyncio.to_thread(rotate_web_token, self.root_path)
-            self.refresh_view(reveal_token=revealed)
-            if revealed is None:
+            self.refresh_view(populate=True, reveal_token=revealed)
+            if action == "apply":
+                message.update(
+                    "[green]设置已保存，Web 管理已启动。[/green]\n"
+                    "请在浏览器打开上方地址，并使用令牌登录。"
+                )
+            elif revealed is None:
                 message.update("[green]操作已完成。[/green]")
         except (HomelabError, OSError, ValueError) as exc:
             message.update(f"[red]{escape(str(exc))}[/red]")
