@@ -50,8 +50,8 @@ case "${ID:-}" in
     ;;
 esac
 
-packages=(python3 python3-venv python3-pip python3-dev build-essential nodejs npm wireguard-tools iptables iproute2 cron iputils-ping)
-required_commands=(python3 node npm wg wg-quick iptables ip crontab ping)
+packages=(python3 python3-venv python3-pip python3-dev build-essential nodejs npm git wireguard-tools iptables iproute2 cron iputils-ping)
+required_commands=(python3 node npm git wg wg-quick iptables ip crontab ping)
 needs_docker=0
 if [ -d "$root/local/services/pairdrop" ] || [ -d "$root/local/services/beszel" ] || \
    [ -d "$root/services/pairdrop" ] || [ -d "$root/services/beszel" ]; then

@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -22,6 +23,7 @@ from homelabctl.tui import (
     WireGuardConnectionScreen,
     WireGuardQrScreen,
 )
+from homelabctl.updates import UpdateInfo
 
 
 SERVICE = """\
@@ -62,6 +64,31 @@ spec:
 
 @unittest.skipIf(os.name == "nt", "Textual headless tests hang in this Windows sandbox")
 class TuiTests(unittest.TestCase):
+    def test_update_key_opens_confirmation_when_update_is_available(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SERVICE, encoding="utf-8")
+            info = UpdateInfo(
+                "available",
+                "a" * 40,
+                "b" * 40,
+                behind=2,
+                remote_url="https://github.com/example/NControl.git",
+                detail="发现 2 个新提交",
+            )
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    with patch("homelabctl.tui.check_for_updates", return_value=info):
+                        await pilot.press("u")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, ConfirmActionScreen)
+                        app.screen.dismiss(False)
+
+            asyncio.run(scenario())
+
     def test_migration_screen_can_open_automatically(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "services" / "web" / "service.yaml"

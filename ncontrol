@@ -17,7 +17,7 @@ if ! "$python_bin" -c 'import psutil, textual, yaml' >/dev/null 2>&1; then
   needs_setup=1
 fi
 if [ "$(uname -s 2>/dev/null || true)" = "Linux" ]; then
-  required_commands=(python3 node npm wg wg-quick iptables ip crontab ping)
+  required_commands=(python3 node npm git wg wg-quick iptables ip crontab ping)
   if [ -d "$root/local/services/pairdrop" ] || [ -d "$root/local/services/beszel" ] || \
      [ -d "$root/services/pairdrop" ] || [ -d "$root/services/beszel" ]; then
     required_commands+=(docker)

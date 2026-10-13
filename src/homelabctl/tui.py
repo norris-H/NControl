@@ -48,6 +48,7 @@ from .migration import (
     wireguard_public_hosts,
 )
 from .security import check_config_paths
+from .updates import UpdateInfo, apply_update, check_for_updates
 from .wireguard_control import (
     interface_addresses,
     interface_peer_networks,
@@ -2200,6 +2201,7 @@ class NControlApp(App[None]):
         Binding("d", "doctor", "系统检查"),
         Binding("a", "toggle_autostart", "切换开机启动"),
         Binding("m", "migration", "迁移初始化"),
+        Binding("u", "update", "更新管理器"),
         Binding("w", "wireguard", "WireGuard 管理"),
         Binding("tab", "wireguard_tab_next", "下一个区域", show=False),
         Binding("ctrl+i", "wireguard_tab_next", "下一个区域", show=False),
@@ -2485,6 +2487,50 @@ class NControlApp(App[None]):
         if isinstance(self.screen, MigrationScreen):
             return
         self.push_screen(MigrationScreen(self.root_path))
+
+    def action_update(self) -> None:
+        self.check_code_update()
+
+    @work(exclusive=True, group="code-update")
+    async def check_code_update(self) -> None:
+        self._write("[b cyan]正在检查 NControl 更新…[/b cyan]")
+        try:
+            info = await asyncio.to_thread(check_for_updates, self.root_path)
+        except (HomelabError, OSError) as exc:
+            self._write(f"[red]检查更新失败：{escape(str(exc))}[/red]")
+            return
+        if info.state == "available":
+            self._write(
+                f"[green]{escape(info.detail)}：{info.current[:12]} → {info.target[:12]}[/green]"
+            )
+            self.push_screen(
+                ConfirmActionScreen(
+                    "更新 NControl 管理器",
+                    f"将从 GitHub 安装 {info.behind} 个新提交。只更新公共代码，local/ 中的服务、配置、密钥和数据不会被修改。",
+                    "安装更新",
+                ),
+                self._update_confirmed,
+            )
+            return
+        color = "green" if info.state == "current" else "yellow"
+        self._write(f"[{color}]{escape(info.detail)}[/{color}]")
+
+    def _update_confirmed(self, confirmed: bool) -> None:
+        if confirmed:
+            self.install_code_update()
+
+    @work(exclusive=True, group="code-update")
+    async def install_code_update(self) -> None:
+        self._write("[b cyan]正在更新 NControl 公共代码…[/b cyan]")
+        try:
+            info: UpdateInfo = await asyncio.to_thread(apply_update, self.root_path)
+        except (HomelabError, OSError) as exc:
+            self._write(f"[red]更新失败：{escape(str(exc))}[/red]")
+            return
+        self._write(
+            f"[green]{escape(info.detail)}（{info.current[:12]} → {info.target[:12]}）[/green]"
+        )
+        self._write("[yellow]请按 Q 退出后重新运行 ./ncontrol，使新版本完全生效。[/yellow]")
 
     def action_logs(self) -> None:
         service = self._selected_service()

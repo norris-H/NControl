@@ -13,6 +13,7 @@ from .errors import HomelabError
 from .layout import layout_status, migrate_local_layout, services_directory
 from .runner import CommandRunner
 from .security import check_config_paths
+from .updates import apply_update, check_for_updates
 
 OPERATIONS = ("prepare", "start", "stop", "restart", "status", "logs")
 
@@ -45,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
     layout_sub = layout.add_subparsers(dest="layout_command", required=True)
     layout_sub.add_parser("status", help="查看当前服务数据目录")
     layout_sub.add_parser("migrate", help="将旧 services 整理到本机 local 目录")
+
+    update = sub.add_parser("update", help="检查或安装 NControl 公共代码更新")
+    update_sub = update.add_subparsers(dest="update_command", required=True)
+    update_sub.add_parser("check", help="检查 GitHub 是否有新版本")
+    update_sub.add_parser("apply", help="使用快进方式安装新版本")
 
     boot = sub.add_parser("boot", help="管理开机启动")
     boot_sub = boot.add_subparsers(dest="boot_command", required=True)
@@ -226,6 +232,18 @@ def run(args: argparse.Namespace) -> int:
         print(f"目录模式：{mode}")
         print(f"服务位置：{path}")
         return 0
+
+    if args.command == "update":
+        info = (
+            apply_update(root)
+            if args.update_command == "apply"
+            else check_for_updates(root)
+        )
+        print(info.detail)
+        print(f"当前版本：{info.current[:12]}")
+        if info.target and info.target != info.current:
+            print(f"目标版本：{info.target[:12]}")
+        return 0 if info.state in {"current", "available", "updated"} else 1
 
     if args.command == "boot":
         from .boot import install, is_installed, run_enabled, set_service_autostart, uninstall

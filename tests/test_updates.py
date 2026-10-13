@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from homelabctl.errors import HomelabError
+from homelabctl.updates import apply_update, check_for_updates
+
+
+def run_git(directory: Path, *arguments: str) -> None:
+    subprocess.run(
+        ("git", *arguments),
+        cwd=directory,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        shell=False,
+        check=True,
+    )
+
+
+class UpdateTests(unittest.TestCase):
+    def _repositories(self, root: Path) -> tuple[Path, Path]:
+        remote = root / "remote.git"
+        seed = root / "seed"
+        node = root / "node"
+        remote.mkdir()
+        seed.mkdir()
+        run_git(remote, "init", "--bare")
+        run_git(seed, "init", "-b", "main")
+        run_git(seed, "config", "user.name", "NControl Tests")
+        run_git(seed, "config", "user.email", "tests@example.invalid")
+        (seed / ".gitignore").write_text("local/\n", encoding="utf-8")
+        (seed / "version.txt").write_text("one\n", encoding="utf-8")
+        run_git(seed, "add", ".")
+        run_git(seed, "commit", "-m", "first")
+        run_git(seed, "remote", "add", "origin", str(remote))
+        run_git(seed, "push", "-u", "origin", "main")
+        subprocess.run(
+            ("git", "clone", "--branch", "main", str(remote), str(node)),
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            shell=False,
+            check=True,
+        )
+        return seed, node
+
+    def test_fast_forward_update_preserves_local_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            seed, node = self._repositories(Path(temp))
+            local_file = node / "local" / "services" / "keep.txt"
+            local_file.parent.mkdir(parents=True)
+            local_file.write_text("private\n", encoding="utf-8")
+
+            (seed / "version.txt").write_text("two\n", encoding="utf-8")
+            run_git(seed, "add", "version.txt")
+            run_git(seed, "commit", "-m", "second")
+            run_git(seed, "push")
+
+            info = check_for_updates(node)
+            self.assertEqual(info.state, "available")
+            self.assertEqual(info.behind, 1)
+            result = apply_update(node)
+            self.assertEqual(result.state, "updated")
+            self.assertEqual((node / "version.txt").read_text(encoding="utf-8"), "two\n")
+            self.assertEqual(local_file.read_text(encoding="utf-8"), "private\n")
+
+    def test_dirty_public_code_blocks_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            _, node = self._repositories(Path(temp))
+            (node / "version.txt").write_text("local change\n", encoding="utf-8")
+            info = check_for_updates(node)
+            self.assertEqual(info.state, "dirty")
+            with self.assertRaises(HomelabError):
+                apply_update(node)
+
+
+if __name__ == "__main__":
+    unittest.main()
