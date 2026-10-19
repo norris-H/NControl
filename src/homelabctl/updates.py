@@ -7,9 +7,10 @@ import shutil
 import subprocess
 import time
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from .errors import HomelabError
+from .proxy_control import load_settings as load_proxy_settings
 
 
 OFFICIAL_REPOSITORY = "norris-H/NControl"
@@ -37,12 +38,18 @@ def _git(
     *arguments: str,
     check: bool = True,
     timeout: float = 30,
+    use_proxy: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     if shutil.which("git") is None:
         raise HomelabError("系统未安装 Git，无法检查 NControl 更新")
+    command = ["git"]
+    if use_proxy:
+        proxy = load_proxy_settings(root)
+        command.extend(("-c", f"http.proxy={proxy.url if proxy.enabled else ''}"))
+    command.extend(arguments)
     try:
         completed = subprocess.run(
-            ("git", *arguments),
+            command,
             cwd=root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -72,7 +79,12 @@ def _uses_official_repository(remote_url: str) -> bool:
     return OFFICIAL_REPOSITORY.lower() in normalized
 
 
-def _official_revision(*, timeout: float = 10, attempts: int = 3) -> str:
+def _official_revision(
+    root: Path | None = None,
+    *,
+    timeout: float = 10,
+    attempts: int = 3,
+) -> str:
     request = Request(
         OFFICIAL_COMMIT_API,
         headers={
@@ -84,7 +96,16 @@ def _official_revision(*, timeout: float = 10, attempts: int = 3) -> str:
     last_error: Exception | None = None
     for attempt in range(max(1, attempts)):
         try:
-            with urlopen(request, timeout=timeout) as response:
+            if root is None:
+                response_context = urlopen(request, timeout=timeout)
+            else:
+                proxy = load_proxy_settings(root)
+                proxies = {"http": proxy.url, "https": proxy.url} if proxy.enabled else {}
+                response_context = build_opener(ProxyHandler(proxies)).open(
+                    request,
+                    timeout=timeout,
+                )
+            with response_context as response:
                 payload = json.load(response)
             revision = payload.get("sha") if isinstance(payload, dict) else None
             if not isinstance(revision, str) or len(revision) != 40:
@@ -100,8 +121,8 @@ def _official_revision(*, timeout: float = 10, attempts: int = 3) -> str:
     ) from last_error
 
 
-def _verify_official_target(target: str) -> None:
-    official = _official_revision()
+def _verify_official_target(target: str, root: Path | None = None) -> None:
+    official = _official_revision(root)
     if target != official:
         raise HomelabError(
             "更新入口尚未同步 GitHub 最新版本，或内容校验失败；已拒绝更新"
@@ -111,7 +132,15 @@ def _verify_official_target(target: str) -> None:
 def _fetch_updates(root: Path, remote_url: str) -> bool:
     """Fetch origin/main and return whether the verified fallback was used."""
     try:
-        _git(root, "fetch", "--quiet", "origin", "main", timeout=8)
+        _git(
+            root,
+            "fetch",
+            "--quiet",
+            "origin",
+            "main",
+            timeout=8,
+            use_proxy=True,
+        )
         return False
     except HomelabError as direct_error:
         if not _uses_official_repository(remote_url):
@@ -124,6 +153,7 @@ def _fetch_updates(root: Path, remote_url: str) -> bool:
                 FALLBACK_REPOSITORY_URL,
                 "main:refs/remotes/origin/main",
                 timeout=20,
+                use_proxy=True,
             )
         except HomelabError as fallback_error:
             raise HomelabError(
@@ -148,7 +178,7 @@ def check_for_updates(root: Path, *, fetch: bool = True) -> UpdateInfo:
     current = _revision(root, "HEAD")
     target = _revision(root, "origin/main")
     if _uses_official_repository(remote_url):
-        _verify_official_target(target)
+        _verify_official_target(target, root)
     status = _git(root, "status", "--porcelain", "--untracked-files=all").stdout.strip()
     counts = _git(
         root,

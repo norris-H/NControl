@@ -202,6 +202,43 @@ class WebHttpSecurityTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
                 self.assertTrue(dashboard["csrf"])
 
+                connection.request("GET", "/api/proxy", headers={"Cookie": cookie})
+                response = connection.getresponse()
+                proxy = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertFalse(proxy["enabled"])
+
+                connection.request(
+                    "POST",
+                    "/api/proxy",
+                    json.dumps({"enabled": True, "host": "127.0.0.1", "port": 7897}),
+                    {
+                        "Cookie": cookie,
+                        "Content-Type": "application/json",
+                        "X-NControl-CSRF": dashboard["csrf"],
+                    },
+                )
+                response = connection.getresponse()
+                proxy = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertTrue(proxy["enabled"])
+                self.assertEqual(proxy["url"], "http://127.0.0.1:7897")
+
+                connection.request(
+                    "POST",
+                    "/api/proxy",
+                    json.dumps({"enabled": False}),
+                    {
+                        "Cookie": cookie,
+                        "Content-Type": "application/json",
+                        "X-NControl-CSRF": dashboard["csrf"],
+                    },
+                )
+                response = connection.getresponse()
+                proxy = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertFalse(proxy["enabled"])
+
                 connection.request("GET", "/assets/app.js", headers={"Cookie": cookie})
                 response = connection.getresponse()
                 asset = response.read()

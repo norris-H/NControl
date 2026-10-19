@@ -40,6 +40,10 @@ from .drivers import get_driver
 from .errors import HomelabError, UnsupportedOperation
 from .layout import services_directory
 from .models import CommandPlan, ServiceDefinition
+from .proxy_control import apply_process_environment as apply_proxy_environment
+from .proxy_control import disable as disable_proxy
+from .proxy_control import load_settings as load_proxy_settings
+from .proxy_control import save_settings as save_proxy_settings
 from .migration import (
     configure_wireguard_host,
     migration_checks,
@@ -2177,6 +2181,152 @@ class StopConfirmScreen(ModalScreen[str | None]):
         (cancel if confirm.has_focus else confirm).focus()
 
 
+class ProxyManagerScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "close", "返回"),
+        Binding("r", "refresh", "刷新"),
+    ]
+
+    CSS = """
+    ProxyManagerScreen { layout: vertical; background: $surface; }
+
+    ProxyManagerScreen #proxy-title {
+        height: 3;
+        padding: 1 2;
+        text-style: bold;
+        color: $text;
+        background: $primary;
+    }
+
+    ProxyManagerScreen #proxy-body {
+        height: 1fr;
+        padding: 2 4;
+    }
+
+    ProxyManagerScreen #proxy-summary {
+        height: 4;
+        padding: 0 1;
+    }
+
+    ProxyManagerScreen .proxy-label {
+        height: 1;
+        margin-top: 1;
+        color: $text-muted;
+    }
+
+    ProxyManagerScreen Input { height: 3; }
+
+    ProxyManagerScreen #proxy-fields {
+        height: 5;
+    }
+
+    ProxyManagerScreen #proxy-host-field { width: 1fr; margin-right: 2; }
+    ProxyManagerScreen #proxy-port-field { width: 22; }
+
+    ProxyManagerScreen #proxy-actions {
+        height: 4;
+        margin-top: 1;
+        align: left middle;
+    }
+
+    ProxyManagerScreen #proxy-actions Button { margin-right: 1; }
+
+    ProxyManagerScreen #proxy-message {
+        height: 1fr;
+        min-height: 5;
+        border: round $secondary;
+        padding: 1 2;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__()
+        self.root_path = root.resolve()
+
+    def compose(self) -> ComposeResult:
+        yield Static("当前主机网络代理", id="proxy-title")
+        with VerticalScroll(id="proxy-body"):
+            yield Static(id="proxy-summary", markup=True)
+            with Horizontal(id="proxy-fields"):
+                with Vertical(id="proxy-host-field"):
+                    yield Label("代理 IP", classes="proxy-label")
+                    yield Input(placeholder="127.0.0.1", id="proxy-host")
+                with Vertical(id="proxy-port-field"):
+                    yield Label("代理端口", classes="proxy-label")
+                    yield Input(placeholder="7890", id="proxy-port", type="integer")
+            with Horizontal(id="proxy-actions"):
+                yield Button("保存并开启", id="proxy-enable", variant="primary")
+                yield Button("关闭代理", id="proxy-disable", variant="warning")
+            yield Static(
+                "支持 HTTP 代理，Clash/Mihomo 的 mixed-port 也可使用。\n"
+                "作用于 NControl 及之后由它启动的服务；已运行的服务需重启。\n"
+                "此配置仅保存在当前主机，不会随公共代码同步。",
+                id="proxy-message",
+                markup=True,
+            )
+
+    def on_mount(self) -> None:
+        self.refresh_view(populate=True)
+        self.query_one("#proxy-host", Input).focus()
+
+    def refresh_view(self, *, populate: bool = False) -> None:
+        try:
+            current = load_proxy_settings(self.root_path)
+        except (HomelabError, OSError) as exc:
+            self.query_one("#proxy-summary", Static).update(
+                f"[red]读取失败：{escape(str(exc))}[/red]"
+            )
+            return
+        if populate:
+            self.query_one("#proxy-host", Input).value = current.host
+            self.query_one("#proxy-port", Input).value = str(current.port)
+        status = "[green]已开启[/green]" if current.enabled else "[dim]已关闭[/dim]"
+        self.query_one("#proxy-summary", Static).update(
+            f"代理状态    {status}\n"
+            f"代理地址    [cyan]{escape(current.url)}[/cyan]\n"
+            "作用范围    当前主机上的 NControl 及其启动的服务"
+        )
+        self.query_one("#proxy-disable", Button).disabled = not current.enabled
+
+    def action_refresh(self) -> None:
+        self.refresh_view(populate=True)
+
+    @on(Button.Pressed)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        message = self.query_one("#proxy-message", Static)
+        try:
+            if event.button.id == "proxy-enable":
+                host = self.query_one("#proxy-host", Input).value.strip()
+                port = int(self.query_one("#proxy-port", Input).value)
+                current = save_proxy_settings(
+                    self.root_path,
+                    enabled=True,
+                    host=host,
+                    port=port,
+                )
+                apply_proxy_environment(self.root_path)
+                message.update(
+                    f"[green]代理已开启：{escape(current.url)}[/green]\n"
+                    "NControl 已立即生效；已运行的服务请重启后生效。"
+                )
+            elif event.button.id == "proxy-disable":
+                disable_proxy(self.root_path)
+                apply_proxy_environment(self.root_path)
+                message.update(
+                    "[green]代理已关闭。[/green]\n"
+                    "NControl 已恢复直连；已运行的服务请重启后生效。"
+                )
+            else:
+                return
+            self.refresh_view()
+        except (HomelabError, OSError, ValueError) as exc:
+            message.update(f"[red]{escape(str(exc))}[/red]")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class WebManagerScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "close", "返回"),
@@ -2436,6 +2586,7 @@ class NControlApp(App[None]):
         Binding("a", "toggle_autostart", "切换开机启动"),
         Binding("m", "migration", "迁移初始化"),
         Binding("u", "update", "更新管理器"),
+        Binding("p", "proxy", "代理设置"),
         Binding("w", "wireguard", "WireGuard 管理"),
         Binding("v", "web", "Web 管理"),
         Binding("tab", "wireguard_tab_next", "下一个区域", show=False),
@@ -2481,7 +2632,6 @@ class NControlApp(App[None]):
         if self.periodic_status_refresh:
             self.refresh_statuses()
             self.set_interval(self.refresh_seconds, self.refresh_statuses)
-            self.set_interval(self.refresh_seconds, self.refresh_selected_logs)
         if self.open_migration:
             self.call_after_refresh(self.action_migration)
 
@@ -2814,11 +2964,6 @@ class NControlApp(App[None]):
             self._show_log_loading(service)
             self.load_logs(service)
 
-    def refresh_selected_logs(self) -> None:
-        service = self._selected_service()
-        if service:
-            self.load_logs(service)
-
     def action_clear_logs(self) -> None:
         service = self._selected_service()
         if service is None:
@@ -2861,6 +3006,11 @@ class NControlApp(App[None]):
         if isinstance(self.screen, WebManagerScreen):
             return
         self.push_screen(WebManagerScreen(self.root_path))
+
+    def action_proxy(self) -> None:
+        if isinstance(self.screen, ProxyManagerScreen):
+            return
+        self.push_screen(ProxyManagerScreen(self.root_path))
 
     def _remember_service(self, service: ServiceDefinition) -> None:
         self.services_by_name[service.name] = service

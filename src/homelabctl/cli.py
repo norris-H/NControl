@@ -52,6 +52,14 @@ def build_parser() -> argparse.ArgumentParser:
     update_sub.add_parser("check", help="检查 GitHub 是否有新版本")
     update_sub.add_parser("apply", help="使用快进方式安装新版本")
 
+    proxy = sub.add_parser("proxy", help="管理当前主机的 HTTP 代理")
+    proxy_sub = proxy.add_subparsers(dest="proxy_command", required=True)
+    proxy_sub.add_parser("status", help="查看代理状态")
+    proxy_enable = proxy_sub.add_parser("enable", help="保存并开启代理")
+    proxy_enable.add_argument("--host", required=True, help="代理 IPv4 或 IPv6 地址")
+    proxy_enable.add_argument("--port", required=True, type=int, help="代理端口")
+    proxy_sub.add_parser("disable", help="关闭代理并保留已填地址")
+
     boot = sub.add_parser("boot", help="管理开机启动")
     boot_sub = boot.add_subparsers(dest="boot_command", required=True)
     boot_sub.add_parser("run", help="启动已启用开机启动的服务")
@@ -262,6 +270,31 @@ def run(args: argparse.Namespace) -> int:
             print(f"目标版本：{info.target[:12]}")
         return 0 if info.state in {"current", "available", "updated"} else 1
 
+    if args.command == "proxy":
+        from .proxy_control import (
+            apply_process_environment,
+            disable,
+            load_settings,
+            save_settings,
+        )
+
+        if args.proxy_command == "enable":
+            result = save_settings(
+                root,
+                enabled=True,
+                host=args.host,
+                port=args.port,
+            )
+        elif args.proxy_command == "disable":
+            result = disable(root)
+        else:
+            result = load_settings(root)
+        apply_process_environment(root)
+        print(f"当前主机代理：{'已开启' if result.enabled else '已关闭'}")
+        print(f"代理地址：{result.url}")
+        print("作用范围：NControl 及之后由它启动或重启的服务")
+        return 0
+
     if args.command == "boot":
         from .boot import install, is_installed, run_enabled, set_service_autostart, uninstall
 
@@ -469,6 +502,9 @@ def main(argv: list[str] | None = None) -> int:
         effective_argv = ["tui"]
     args = parser.parse_args(effective_argv)
     try:
+        from .proxy_control import apply_process_environment
+
+        apply_process_environment(args.root.resolve())
         return run(args)
     except HomelabError as exc:
         print(f"错误: {exc}", file=sys.stderr)

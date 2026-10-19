@@ -35,6 +35,10 @@ from .migration import (
     update_wireguard_public_host,
 )
 from .models import CommandPlan, ServiceDefinition
+from .proxy_control import apply_process_environment as apply_proxy_environment
+from .proxy_control import disable as disable_proxy
+from .proxy_control import load_settings as load_proxy_settings
+from .proxy_control import save_settings as save_proxy_settings
 from .security import check_config_paths
 from .updates import apply_update, check_for_updates
 from .web_control import load_config, read_token, status_dict
@@ -200,6 +204,32 @@ class WebBackend:
             raise HomelabError("安装更新需要明确确认")
         with self.mutation_lock:
             return asdict(apply_update(self.root))
+
+    def proxy_info(self) -> dict[str, Any]:
+        return load_proxy_settings(self.root).to_dict()
+
+    def configure_proxy(self, body: dict[str, Any]) -> dict[str, Any]:
+        enabled = _bool(body.get("enabled"))
+        with self.mutation_lock:
+            if enabled:
+                host = str(body.get("host", "")).strip()
+                try:
+                    port = int(body.get("port"))
+                except (TypeError, ValueError) as exc:
+                    raise HomelabError("代理端口无效") from exc
+                current = save_proxy_settings(
+                    self.root,
+                    enabled=True,
+                    host=host,
+                    port=port,
+                )
+                apply_proxy_environment(self.root)
+                message = f"代理已开启：{current.url}"
+            else:
+                current = disable_proxy(self.root)
+                apply_proxy_environment(self.root)
+                message = "代理已关闭"
+        return {**current.to_dict(), "message": message}
 
     def migration(self) -> dict[str, Any]:
         return {"results": [asdict(item) for item in migration_checks(self.root)]}
@@ -610,6 +640,9 @@ class NControlRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/update":
             self._json(HTTPStatus.OK, self.server.backend.update_info())
             return
+        if path == "/api/proxy":
+            self._json(HTTPStatus.OK, self.server.backend.proxy_info())
+            return
         if path == "/api/migration":
             self._json(HTTPStatus.OK, self.server.backend.migration())
             return
@@ -694,6 +727,9 @@ class NControlRequestHandler(BaseHTTPRequestHandler):
                 self.server.backend.apply_update(_bool(body.get("confirmed"))),
             )
             return
+        if path == "/api/proxy":
+            self._json(HTTPStatus.OK, self.server.backend.configure_proxy(body))
+            return
         if path == "/api/migration/action":
             self._json(HTTPStatus.OK, self.server.backend.migration_action(body))
             return
@@ -722,6 +758,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="homelabctl.web_server")
     parser.add_argument("--root", type=Path, required=True)
     args = parser.parse_args(argv)
+    apply_proxy_environment(args.root.resolve())
     try:
         serve(args.root.resolve())
         return 0

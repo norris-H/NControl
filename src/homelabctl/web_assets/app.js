@@ -7,6 +7,7 @@ const state = {
   wireguardService: null,
   wireguard: null,
   wireguardPrevious: null,
+  proxy: null,
   view: "dashboard",
 };
 
@@ -114,6 +115,7 @@ function showView(name) {
   };
   [$("#view-eyebrow").textContent, $("#view-title").textContent] = labels[name];
   if (name === "wireguard") refreshWireGuard();
+  if (name === "system") loadProxy();
 }
 
 function summaryCard(label, value) {
@@ -515,6 +517,36 @@ async function applyUpdate() {
   } catch (error) { toast(error.message, true); }
 }
 
+function renderProxy() {
+  const proxy = state.proxy;
+  if (!proxy) return;
+  $("#proxy-host").value = proxy.host || "127.0.0.1";
+  $("#proxy-port").value = proxy.port || 7890;
+  $("#proxy-state").textContent = proxy.enabled ? `已开启 · ${proxy.url}` : "已关闭";
+  $("#proxy-state").classList.toggle("enabled", Boolean(proxy.enabled));
+  $("#proxy-disable").disabled = !proxy.enabled;
+}
+
+async function loadProxy() {
+  try {
+    state.proxy = await api("/api/proxy");
+    renderProxy();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function configureProxy(enabled) {
+  const body = { enabled };
+  if (enabled) {
+    body.host = $("#proxy-host").value.trim();
+    body.port = Number($("#proxy-port").value);
+  }
+  try {
+    state.proxy = await api("/api/proxy", { method: "POST", body });
+    renderProxy();
+    toast(state.proxy.message || `代理已${enabled ? "开启" : "关闭"}`);
+  } catch (error) { toast(error.message, true); }
+}
+
 async function checkMigration() {
   try { renderResultList("#migration-results", (await api("/api/migration")).results); }
   catch (error) { toast(error.message, true); }
@@ -550,6 +582,8 @@ function bindEvents() {
   $("#wg-add-connection").addEventListener("click", () => openWireGuardForm("add-connection"));
   $("#doctor-run").addEventListener("click", runDoctor);
   $("#update-check").addEventListener("click", checkUpdate);
+  $("#proxy-enable").addEventListener("click", () => configureProxy(true));
+  $("#proxy-disable").addEventListener("click", () => configureProxy(false));
   $("#migration-check").addEventListener("click", checkMigration);
   $$('[data-migration]').forEach((button) => button.addEventListener("click", () => runMigrationAction(button.dataset.migration)));
   $("#logout-button").addEventListener("click", async () => {

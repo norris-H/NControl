@@ -19,6 +19,7 @@ from homelabctl.tui import (
     CreateWireGuardServerScreen,
     MigrationScreen,
     NControlApp,
+    ProxyManagerScreen,
     StopConfirmScreen,
     WebManagerScreen,
     WireGuardManagerScreen,
@@ -132,6 +133,45 @@ class TuiTests(unittest.TestCase):
                     )
                     await asyncio.to_thread(stop_web, Path(temp))
                     app.screen.dismiss(None)
+
+            asyncio.run(scenario())
+
+    def test_proxy_key_opens_host_proxy_manager(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SERVICE, encoding="utf-8")
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    await pilot.press("p")
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, ProxyManagerScreen)
+                    self.assertEqual(
+                        app.screen.query_one("#proxy-host", Input).value,
+                        "127.0.0.1",
+                    )
+                    self.assertEqual(
+                        app.screen.query_one("#proxy-port", Input).value,
+                        "7890",
+                    )
+                    app.screen.dismiss(None)
+
+            asyncio.run(scenario())
+
+    def test_dashboard_does_not_schedule_log_refresh(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "services" / "web" / "service.yaml"
+            path.parent.mkdir(parents=True)
+            path.write_text(SERVICE, encoding="utf-8")
+
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), refresh_seconds=0.05)
+                with patch.object(app, "load_logs") as load_logs:
+                    async with app.run_test(size=(120, 40)):
+                        await asyncio.sleep(0.18)
+                        self.assertEqual(load_logs.call_count, 1)
 
             asyncio.run(scenario())
 

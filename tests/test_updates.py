@@ -9,6 +9,7 @@ from unittest.mock import patch
 from urllib.error import URLError
 
 from homelabctl.errors import HomelabError
+from homelabctl.proxy_control import ProxySettings
 from homelabctl.updates import (
     FALLBACK_REPOSITORY_URL,
     _fetch_updates,
@@ -33,6 +34,21 @@ def run_git(directory: Path, *arguments: str) -> None:
 
 
 class UpdateTests(unittest.TestCase):
+    def test_network_git_uses_node_proxy_without_changing_global_config(self):
+        completed = subprocess.CompletedProcess(("git",), 0, "", "")
+        with (
+            patch(
+                "homelabctl.updates.load_proxy_settings",
+                return_value=ProxySettings(True, "192.168.1.2", 7897),
+            ),
+            patch("homelabctl.updates.subprocess.run", return_value=completed) as run,
+        ):
+            from homelabctl.updates import _git
+
+            _git(Path("."), "fetch", "origin", use_proxy=True)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], ["git", "-c", "http.proxy=http://192.168.1.2:7897"])
+
     def test_official_revision_retries_transient_failure(self):
         revision = "a" * 40
         response = io.BytesIO(f'{{"sha":"{revision}"}}'.encode())

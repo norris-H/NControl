@@ -109,6 +109,11 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px r
 .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .system-grid .wide { grid-column: 1 / -1; }
 .result-list { display: grid; gap: 8px; padding: 18px 20px; }
+.proxy-state { color: var(--muted); font-size: 12px; }
+.proxy-state.enabled { color: var(--accent); }
+.proxy-form { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(130px, .35fr) auto; gap: 14px; align-items: end; padding: 18px 20px 20px; }
+.proxy-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.proxy-form > .muted { grid-column: 1 / -1; margin: 0; font-size: 12px; }
 .migration-actions { padding: 0 20px 20px; }
 .migration-actions input { min-width: min(320px, 100%); flex: 1; }
 dialog { width: min(620px, calc(100vw - 30px)); padding: 0; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--surface); box-shadow: 0 35px 120px rgba(0,0,0,.6); }
@@ -155,4 +160,6 @@ dialog::backdrop { background: rgba(2,5,8,.72); backdrop-filter: blur(5px); }
   .services-panel { max-height: 340px; overflow: auto; }
   .detail-meta, .system-grid { grid-template-columns: 1fr; }
   .system-grid .wide { grid-column: auto; }
+  .proxy-form { grid-template-columns: 1fr; }
+  .proxy-form > .muted { grid-column: auto; }
 }
