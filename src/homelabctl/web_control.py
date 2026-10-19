@@ -389,6 +389,7 @@ def apply_and_start(
     if bind not in _local_ipv4_addresses():
         raise HomelabError(f"监听地址 {bind} 不是当前主机的 IPv4 地址")
     previous = load_config(root)
+    previous_token = _token_contents(root)
     was_running = _live_process(root) is not None
     if was_running:
         stop(root)

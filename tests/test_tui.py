@@ -5,12 +5,13 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import yaml
-
 from textual.widgets import Button, DataTable, Input, RichLog, Static
 
+from homelabctl.errors import HomelabError
 from homelabctl.tui import (
     AddWireGuardPeerScreen,
     ConfirmActionScreen,
@@ -62,6 +63,33 @@ spec:
     connections:
       - {name: wg0-to-wg1, from: wg0, to: wg1, sourceNetwork: 10.10.0.0/24}
 """
+
+
+class TuiLifecycleTests(unittest.TestCase):
+    def test_web_refresh_does_not_override_textual_running_state(self):
+        screen = WebManagerScreen(Path("."))
+        screen._running = True
+        controls: dict[str, MagicMock] = {}
+
+        def control(selector: str, *_: object) -> MagicMock:
+            return controls.setdefault(selector, MagicMock())
+
+        current = SimpleNamespace(
+            enabled=False,
+            running=False,
+            bind="127.0.0.1",
+            port=8765,
+            url="http://127.0.0.1:8765/",
+            pid=None,
+        )
+        with (
+            patch("homelabctl.tui.web_status", return_value=current),
+            patch("homelabctl.tui.read_web_token", side_effect=HomelabError("disabled")),
+            patch.object(screen, "query_one", side_effect=control),
+        ):
+            screen.refresh_view(populate=True)
+
+        self.assertTrue(screen.is_running)
 
 
 @unittest.skipIf(os.name == "nt", "Textual headless tests hang in this Windows sandbox")

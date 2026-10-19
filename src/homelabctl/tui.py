@@ -2250,8 +2250,6 @@ class WebManagerScreen(ModalScreen[None]):
     def __init__(self, root: Path) -> None:
         super().__init__()
         self.root_path = root.resolve()
-        self._running = False
-        self._enabled = False
 
     def compose(self) -> ComposeResult:
         yield Static("Web 管理  ·  默认关闭，建议只通过 localhost 或 WireGuard 访问", id="web-title")
@@ -2297,8 +2295,6 @@ class WebManagerScreen(ModalScreen[None]):
         enabled = "[green]已启用[/green]" if current.enabled else "[dim]默认关闭[/dim]"
         running = "[green]运行中[/green]" if current.running else "[dim]未运行[/dim]"
         pid = f" · PID {current.pid}" if current.pid else ""
-        self._running = current.running
-        self._enabled = current.enabled
         self.query_one("#web-summary", Static).update(
             f"功能状态    {enabled}    运行状态    {running}{pid}\n"
             f"访问地址    [cyan]{escape(current.url)}[/cyan]\n"

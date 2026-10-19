@@ -7,6 +7,7 @@ import socket
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 import yaml
@@ -75,6 +76,35 @@ class WebControlTests(unittest.TestCase):
             root = make_root(temp)
             with self.assertRaises(HomelabError):
                 enable(root, "0.0.0.0", 8765)
+
+    def test_apply_restores_existing_token_when_start_fails(self):
+        root = Path(".").resolve()
+        previous = {
+            "version": 1,
+            "enabled": False,
+            "bind": "127.0.0.1",
+            "port": 8765,
+        }
+        with (
+            patch(
+                "homelabctl.web_control._local_ipv4_addresses",
+                return_value={"127.0.0.1"},
+            ),
+            patch("homelabctl.web_control.load_config", return_value=previous),
+            patch("homelabctl.web_control._token_contents", return_value="before\n"),
+            patch("homelabctl.web_control._live_process", return_value=None),
+            patch("homelabctl.web_control._write_token"),
+            patch("homelabctl.web_control.enable", return_value="after"),
+            patch("homelabctl.web_control._atomic_yaml"),
+            patch("homelabctl.web_control._restore_token") as restore_token,
+            patch(
+                "homelabctl.web_control.start",
+                side_effect=HomelabError("start failed"),
+            ),
+        ):
+            with self.assertRaises(HomelabError):
+                apply_and_start(root, "127.0.0.1", 8765, "after")
+        restore_token.assert_called_once_with(root, "before\n")
 
     def test_background_lifecycle_and_token_rotation(self):
         with tempfile.TemporaryDirectory() as temp:
