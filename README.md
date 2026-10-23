@@ -50,7 +50,8 @@ FRP 的 Windows 二进制按 `local/services/frps/package/windows/README.txt` �
 ./ncontrol
 ```
 
-支持 Ubuntu、Debian 和 Raspberry Pi OS（含 Lite）。启动器会识别新机器。环境不完整时
+支持 Ubuntu、Debian、Raspberry Pi OS（含 Lite）及具备 `apt-get`/`dpkg` 的 Debian 兼容系统。
+启动器会识别新机器。环境不完整时
 先在普通终端中准备系统软件包和 `.venv`，
 随后自动打开 TUI 的“迁移初始化”页面。也可以随时在主界面按 `M` 进入。页面中
 可以填写新的公网 IP 或域名、一键配置 WireGuard 主机、注册开机入口并启动自动

@@ -37,18 +37,29 @@ if [ "$(uname -s)" != "Linux" ] || [ ! -f /etc/os-release ]; then
 fi
 
 . /etc/os-release
+debian_compatible=0
 case "${ID:-}" in
-  ubuntu|debian|raspbian) ;;
+  ubuntu|debian|raspbian) debian_compatible=1 ;;
   *)
     case " ${ID_LIKE:-} " in
-      *" debian "*) ;;
-      *)
-        echo "当前系统不是 Debian 系（Ubuntu / Debian / Raspberry Pi OS），无法自动安装依赖。" >&2
-        exit 2
-        ;;
+      *" debian "*) debian_compatible=1 ;;
     esac
     ;;
 esac
+
+# Some Raspberry Pi OS images and Debian derivatives don't publish a useful
+# ID/ID_LIKE pair. These are stronger compatibility signals than a distro name.
+if [ "$debian_compatible" -eq 0 ] && [ -r /etc/debian_version ]; then
+  debian_compatible=1
+fi
+if [ "$debian_compatible" -eq 0 ] && command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+  debian_compatible=1
+fi
+if [ "$debian_compatible" -eq 0 ]; then
+  echo "当前系统不具备 Debian 兼容环境，无法自动安装依赖。" >&2
+  echo "检测结果: ID=${ID:-未知} ID_LIKE=${ID_LIKE:-未知} PRETTY_NAME=${PRETTY_NAME:-未知}" >&2
+  exit 2
+fi
 
 packages=(python3 python3-venv python3-pip python3-dev build-essential nodejs npm git wireguard-tools iptables iproute2 cron iputils-ping)
 required_commands=(python3 node npm git wg wg-quick iptables ip crontab ping)
