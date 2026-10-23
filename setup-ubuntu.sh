@@ -32,42 +32,57 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "$(uname -s)" != "Linux" ] || [ ! -f /etc/os-release ]; then
-  echo "此初始化脚本只支持 Debian 系 Linux。" >&2
+  echo "此初始化脚本只支持 Linux。" >&2
   exit 2
 fi
 
 . /etc/os-release
-debian_compatible=0
+package_family=""
 case "${ID:-}" in
-  ubuntu|debian|raspbian) debian_compatible=1 ;;
+  ubuntu|debian|raspbian) package_family="debian" ;;
+  opencloudos|rhel|centos|rocky|almalinux|fedora|ol|anolis) package_family="rpm" ;;
   *)
     case " ${ID_LIKE:-} " in
-      *" debian "*) debian_compatible=1 ;;
+      *" debian "*) package_family="debian" ;;
+      *" rhel "*|*" fedora "*|*" centos "*|*" opencloudos "*) package_family="rpm" ;;
     esac
     ;;
 esac
 
 # Some Raspberry Pi OS images and Debian derivatives don't publish a useful
 # ID/ID_LIKE pair. These are stronger compatibility signals than a distro name.
-if [ "$debian_compatible" -eq 0 ] && [ -r /etc/debian_version ]; then
-  debian_compatible=1
+if [ -z "$package_family" ] && [ -r /etc/debian_version ]; then
+  package_family="debian"
 fi
-if [ "$debian_compatible" -eq 0 ] && command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
-  debian_compatible=1
+if [ -z "$package_family" ] && command -v apt-get >/dev/null 2>&1 && command -v dpkg >/dev/null 2>&1; then
+  package_family="debian"
 fi
-if [ "$debian_compatible" -eq 0 ]; then
-  echo "当前系统不具备 Debian 兼容环境，无法自动安装依赖。" >&2
+if [ -z "$package_family" ] && command -v rpm >/dev/null 2>&1 && { command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1; }; then
+  package_family="rpm"
+fi
+if [ -z "$package_family" ]; then
+  echo "当前 Linux 尚未适配自动依赖安装。" >&2
   echo "检测结果: ID=${ID:-未知} ID_LIKE=${ID_LIKE:-未知} PRETTY_NAME=${PRETTY_NAME:-未知}" >&2
   exit 2
 fi
 
-packages=(python3 python3-venv python3-pip python3-dev build-essential nodejs npm git wireguard-tools iptables iproute2 cron iputils-ping)
-required_commands=(python3 node npm git wg wg-quick iptables ip crontab ping)
+if [ "$package_family" = "debian" ]; then
+  packages=(python3 python3-venv python3-pip python3-dev build-essential nodejs npm git wireguard-tools iptables iproute2 cron iputils-ping sudo)
+  package_label="APT / Debian"
+else
+  packages=(python3 python3-pip python3-devel gcc gcc-c++ make nodejs npm git wireguard-tools iptables iproute cronie iputils sudo)
+  package_label="DNF / RPM"
+fi
+required_commands=(python3 node npm git wg wg-quick iptables ip crontab ping sudo)
 needs_docker=0
 if [ -d "$root/local/services/pairdrop" ] || [ -d "$root/local/services/beszel" ] || \
    [ -d "$root/services/pairdrop" ] || [ -d "$root/services/beszel" ]; then
   needs_docker=1
-  packages+=(docker.io)
+  if [ "$package_family" = "debian" ]; then
+    packages+=(docker.io)
+  else
+    packages+=(docker)
+  fi
   required_commands+=(docker)
 fi
 missing=()
@@ -75,8 +90,19 @@ for command in "${required_commands[@]}"; do
   command -v "$command" >/dev/null 2>&1 || missing+=("$command")
 done
 if ! python3 -m venv --help >/dev/null 2>&1; then
-  missing+=("python3-venv")
+  missing+=("Python venv")
 fi
+
+run_privileged() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+  elif command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+  else
+    echo "安装系统依赖需要 root 权限或 sudo。" >&2
+    return 2
+  fi
+}
 
 ask_yes() {
   local prompt="$1"
@@ -92,9 +118,15 @@ ask_yes() {
 
 if [ "${#missing[@]}" -gt 0 ]; then
   echo "缺少系统组件: ${missing[*]}"
-  if ask_yes "是否安装 NControl 所需的 Debian 系软件包？"; then
-    sudo apt-get update
-    sudo apt-get install -y "${packages[@]}"
+  if ask_yes "是否使用 $package_label 安装 NControl 所需的软件包？"; then
+    if [ "$package_family" = "debian" ]; then
+      run_privileged apt-get update
+      run_privileged apt-get install -y "${packages[@]}"
+    elif command -v dnf >/dev/null 2>&1; then
+      run_privileged dnf install -y "${packages[@]}"
+    else
+      run_privileged yum install -y "${packages[@]}"
+    fi
   else
     echo "缺少依赖，初始化已停止。" >&2
     exit 2
@@ -104,11 +136,15 @@ fi
 if [ "$needs_docker" -eq 1 ] && ! docker info >/dev/null 2>&1; then
   current_user="$(id -un)"
   echo "PairDrop/Beszel 需要当前用户访问 Docker。"
-  echo "注意：docker 组权限基本等同于系统管理员权限。"
-  if [ "$current_user" != "root" ] && ask_yes "是否将 $current_user 加入 docker 组？（重新登录后生效）"; then
-    sudo usermod -aG docker "$current_user"
-    echo "已加入 docker 组；完成初始化后请退出 SSH 并重新登录一次。"
+  if [ "$current_user" = "root" ]; then
+    echo "Docker 命令已安装，但守护进程尚不可用；请检查或启动 docker 服务。"
   else
+    echo "注意：docker 组权限基本等同于系统管理员权限。"
+  fi
+  if [ "$current_user" != "root" ] && ask_yes "是否将 $current_user 加入 docker 组？（重新登录后生效）"; then
+    run_privileged usermod -aG docker "$current_user"
+    echo "已加入 docker 组；完成初始化后请退出 SSH 并重新登录一次。"
+  elif [ "$current_user" != "root" ]; then
     echo "未配置 Docker 用户权限；PairDrop/Beszel 暂时无法由 NControl 启动。"
   fi
 fi

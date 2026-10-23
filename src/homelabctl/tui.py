@@ -1900,7 +1900,7 @@ class MigrationScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         yield Static("迁移初始化", id="migration-title")
         yield Static(
-            "复制到新的 Debian 系 Linux 后在这里完成环境检查、WireGuard 主机配置、开机入口和服务启动。\n"
+            "复制到新的 Linux 主机后在这里完成环境检查、WireGuard 主机配置、开机入口和服务启动。\n"
             "云安全组和外部设备地址仍需在对应平台修改。",
             id="migration-note",
         )

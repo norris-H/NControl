@@ -84,7 +84,7 @@ WireGuard 接口密钥，报告端口冲突、网段重叠和重复密钥。
 
 ## 整目录迁移
 
-Ubuntu、Debian 或 Raspberry Pi OS 目标机复制目录后运行 `./ncontrol`。启动器会识别机器变化和环境缺失，
+将目录复制到受支持的 Debian/APT 或 RHEL/DNF 系 Linux 后运行 `./ncontrol`。启动器会识别机器变化和环境缺失，
 必要时先重建 Python 虚拟环境，然后自动打开 TUI 的“迁移初始化”页面。主界面
 也可按 `M` 随时进入。命令行的 `ncontrol migrate check` 始终只读，可重复执行。
 

@@ -42,7 +42,7 @@ ncontrol.cmd
 Windows 使用 `ncontrol.cmd prepare danmu-api`。目标系统需预先安装 Python 和 Node.js；
 FRP 的 Windows 二进制按 `local/services/frps/package/windows/README.txt` 放置。
 
-## 迁移到新的 Debian 系 Linux
+## 迁移到新的 Linux 主机
 
 复制整个 NControl 文件夹后，只需启动：
 
@@ -50,7 +50,8 @@ FRP 的 Windows 二进制按 `local/services/frps/package/windows/README.txt` �
 ./ncontrol
 ```
 
-支持 Ubuntu、Debian、Raspberry Pi OS（含 Lite）及具备 `apt-get`/`dpkg` 的 Debian 兼容系统。
+支持 Ubuntu、Debian、Raspberry Pi OS（含 Lite），以及 OpenCloudOS、RHEL、CentOS、
+Rocky Linux、AlmaLinux、Fedora 等使用 DNF/RPM 的兼容系统。
 启动器会识别新机器。环境不完整时
 先在普通终端中准备系统软件包和 `.venv`，
 随后自动打开 TUI 的“迁移初始化”页面。也可以随时在主界面按 `M` 进入。页面中

@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     web_token = web_sub.add_parser("token", help="设置登录令牌；不填则随机生成")
     web_token.add_argument("value", nargs="?", help="任意非空单行内容")
 
-    migrate = sub.add_parser("migrate", help="检查或初始化迁移后的 Debian 系 Linux")
+    migrate = sub.add_parser("migrate", help="检查或初始化迁移后的 Linux 主机")
     migrate_sub = migrate.add_subparsers(dest="migrate_command", required=True)
     migrate_sub.add_parser("check", help="只读检查新服务器运行环境")
     migrate_init = migrate_sub.add_parser("init", help="初始化迁移后的服务器")
