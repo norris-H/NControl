@@ -279,10 +279,10 @@ function interfaceCard(item) {
     wgButton("添加客户端", "add-peer", { interface: item.name }),
     wgButton("导入已有客户端", "import-peers", { interface: item.name }),
     wgButton("删除服务端", "delete-server", { interface: item.name }, true),
-  ] : [wgButton("删除客户端接口", "delete-client", { interface: item.name }, true)];
+  ] : [wgButton("查看/编辑", "edit-client", { interface: item.name }), wgButton("删除客户端接口", "delete-client", { interface: item.name }, true)];
   return `<article class="wg-card"><div class="wg-card-head"><div><h3>${escapeHtml(item.name)}</h3><p>${server ? "服务端接口" : "连接其他服务端"} · ${escapeHtml(item.address)}</p></div><span class="status-dot ${running ? "healthy" : "stopped"}"></span></div>
     <div class="metric-row"><div class="metric"><span>接收 / 实时</span><strong>${formatBytes(runtime.receivedBytes)} · ${formatRate(item.rate?.received)}</strong></div><div class="metric"><span>发送 / 实时</span><strong>${formatBytes(runtime.sentBytes)} · ${formatRate(item.rate?.sent)}</strong></div><div class="metric"><span>最近握手</span><strong>${handshake(runtime.latestHandshake)}</strong></div><div class="metric"><span>运行状态</span><strong>${running ? "已连接" : "未连接"}</strong></div></div>
-    ${server ? `<div class="sub-list">${peers || `<div class="sub-row muted">还没有受管客户端</div>`}</div>` : ""}<div class="inline-actions">${actions.join("")}</div></article>`;
+    ${server ? `<div class="sub-list">${peers || `<div class="sub-row muted">还没有受管客户端</div>`}</div>` : `<div class="sub-list"><div class="sub-row"><span><strong>远端端点</strong><br><span class="muted">${escapeHtml(item.settings?.endpoint || "未读取")}</span></span></div><div class="sub-row"><span><strong>允许网段</strong><br><span class="muted">${escapeHtml(item.settings?.allowedIPs || "未读取")}</span></span></div><div class="sub-row"><span><strong>NControl 客户端公钥</strong><br><span class="muted">${escapeHtml(item.settings?.publicKey || "未读取")}</span></span></div></div>`}<div class="inline-actions">${actions.join("")}</div></article>`;
 }
 
 function connectionCard(item) {
@@ -341,7 +341,7 @@ async function handleWireGuardAction(button) {
   delete values.wgAction;
   const dangerous = ["stop-interface", "disconnect", "delete-server", "delete-client", "remove-peer", "delete-connection"].includes(action);
   if (dangerous && !(await confirmAction(`确认执行“${button.textContent.trim()}”？`))) return;
-  if (["create-server", "edit-server", "import-client", "add-peer", "add-connection", "edit-connection"].includes(action)) {
+  if (["create-server", "edit-server", "create-client", "edit-client", "import-client", "add-peer", "add-connection", "edit-connection"].includes(action)) {
     openWireGuardForm(action, values);
     return;
   }
@@ -379,6 +379,8 @@ function openWireGuardForm(action, initial = {}) {
   const connection = state.wireguard?.connections.find((item) => item.name === initial.connection);
   if (action === "create-server") initial = nextServerDefaults();
   if (action === "edit-server") initial = { ...interfaceItem?.settings, interface: interfaceItem?.name };
+  if (action === "create-client") initial = { interface: initial.interface || nextServerDefaults().interface, persistentKeepalive: 25 };
+  if (action === "edit-client") initial = { ...interfaceItem?.settings, interface: interfaceItem?.name };
   if (action === "edit-connection") initial = {
     name: connection?.name, source: connection?.from, target: connection?.to,
     sourceNetwork: connection?.sourceNetwork,
@@ -390,6 +392,8 @@ function openWireGuardForm(action, initial = {}) {
   const definitions = {
     "create-server": ["新建服务端", [textField("interface", "接口名", initial.interface), textField("address", "服务端地址（不带掩码）", initial.address), textField("addressPool", "客户端地址池", initial.addressPool), textField("listenPort", "监听端口", initial.listenPort, "number"), textField("publicEndpoint", "公网入口（IP/域名:端口）", initial.publicEndpoint)]],
     "edit-server": ["编辑服务端", [hiddenField("interface", initial.interface), textField("address", "服务端地址（不带掩码）", initial.address), textField("addressPool", "客户端地址池", initial.addressPool), textField("listenPort", "监听端口", initial.listenPort, "number"), textField("publicEndpoint", "公网入口（IP/域名:端口）", initial.publicEndpoint)]],
+    "create-client": ["手动连接其他服务端", [textField("interface", "本机接口名，例如 wg1", initial.interface), textField("address", "本机隧道地址，也是远端 Peer 的允许 IP", initial.address || "", "text"), textField("peerPublicKey", "远端服务端公钥", initial.peerPublicKey || ""), optionalTextField("presharedKey", "预共享密钥（可选）", ""), textField("endpoint", "远端端点（IP/域名:端口）", initial.endpoint || ""), textField("allowedIPs", "通过远端访问的 IP/网段，多个用逗号分隔", initial.allowedIPs || ""), textField("persistentKeepalive", "永久保活（秒）", initial.persistentKeepalive || 25, "number")]],
+    "edit-client": ["查看/编辑客户端接口", [hiddenField("interface", initial.interface), readonlyField("NControl 客户端公钥（填写到远端公钥栏）", initial.publicKey || ""), textField("address", "本机隧道地址，也是远端 Peer 的允许 IP", initial.address || ""), textField("peerPublicKey", "远端服务端公钥", initial.peerPublicKey || ""), optionalTextField("presharedKey", `预共享密钥（当前${initial.presharedKeyConfigured ? "已" : "未"}配置；留空保持，输入 - 删除）`, ""), textField("endpoint", "远端端点", initial.endpoint || ""), textField("allowedIPs", "通过远端访问的 IP/网段", initial.allowedIPs || ""), textField("persistentKeepalive", "永久保活（秒）", initial.persistentKeepalive || 0, "number")]],
     "import-client": ["连接其他服务端", [textField("interface", "本地接口名，例如 wg1", initial.interface || "wg1"), textField("sourceConfig", "服务端提供的 .conf 文件路径", initial.sourceConfig || "")]],
     "add-peer": ["添加客户端", [hiddenField("interface", initial.interface), textField("name", "客户端名称", ""), textField("address", "客户端地址（留空则自动分配）", ""), selectField("profile", "访问权限", interfaceItem?.profiles || [], "")]],
     "add-connection": ["添加网络连接", [textField("name", "连接名称", ""), selectField("source", "来源接口", interfaceOptions, ""), selectField("target", "目标接口", interfaceOptions, ""), textField("sourceNetwork", "来源网段，例如 10.10.0.0/24", ""), textField("destinationNetworks", "目标网段，多个用逗号分隔", ""), checkField("allowReturnTraffic", "允许返回流量", true), checkField("autoConnect", "随 WireGuard 自动连接", false)]],
@@ -406,6 +410,12 @@ function openWireGuardForm(action, initial = {}) {
 
 function textField(name, label, value = "", type = "text") {
   return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value)}" required></label>`;
+}
+function optionalTextField(name, label, value = "", type = "text") {
+  return `<label>${escapeHtml(label)}<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value)}"></label>`;
+}
+function readonlyField(label, value = "") {
+  return `<label>${escapeHtml(label)}<input type="text" value="${escapeHtml(value)}" readonly></label>`;
 }
 function hiddenField(name, value) { return `<input name="${escapeHtml(name)}" type="hidden" value="${escapeHtml(value)}">`; }
 function checkField(name, label, checked) { return `<label class="check-field"><input name="${escapeHtml(name)}" type="checkbox"${checked ? " checked" : ""}> ${escapeHtml(label)}</label>`; }
@@ -578,6 +588,7 @@ function bindEvents() {
   $("#log-clear").addEventListener("click", () => runServiceAction("clear-logs"));
   $("#wireguard-service").addEventListener("change", (event) => { state.wireguardService = event.target.value; refreshWireGuard(); });
   $("#wg-new-server").addEventListener("click", () => openWireGuardForm("create-server"));
+  $("#wg-create-client").addEventListener("click", () => openWireGuardForm("create-client"));
   $("#wg-import-client").addEventListener("click", () => openWireGuardForm("import-client"));
   $("#wg-add-connection").addEventListener("click", () => openWireGuardForm("add-connection"));
   $("#doctor-run").addEventListener("click", runDoctor);

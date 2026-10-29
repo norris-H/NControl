@@ -417,6 +417,10 @@ spec:
                         str(app.screen.query_one("#wg-actions").render()),
                     )
                     self.assertIn(
+                        "E 查看/编辑客户端",
+                        str(app.screen.query_one("#wg-actions").render()),
+                    )
+                    self.assertIn(
                         "D 删除客户端",
                         str(app.screen.query_one("#wg-actions").render()),
                     )
@@ -476,6 +480,55 @@ spec:
                     await pilot.pause()
                     self.assertIsInstance(app.screen, ConnectWireGuardServerScreen)
                     app.screen.dismiss(None)
+
+            asyncio.run(scenario())
+
+    def test_wireguard_manager_opens_populated_client_editor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "services" / "wireguard"
+            (directory / "config").mkdir(parents=True)
+            (directory / "service.yaml").write_text(WIREGUARD_SERVICE, encoding="utf-8")
+            (directory / "config" / "wg0.conf").write_text(
+                "[Interface]\nAddress = 10.10.0.1/32\n", encoding="utf-8"
+            )
+            (directory / "config" / "wg1.conf").write_text(
+                "[Interface]\nAddress = 192.168.7.2/32\n", encoding="utf-8"
+            )
+
+            async def scenario() -> None:
+                settings = {
+                    "interface": "wg1",
+                    "address": "192.168.7.2/32",
+                    "public_key": "client-public-key",
+                    "peer_public_key": "qnap-public-key",
+                    "endpoint": "qnap.example.test:51820",
+                    "allowed_ips": "192.168.7.0/24",
+                    "persistent_keepalive": "10",
+                    "preshared_key_configured": "true",
+                }
+                with patch(
+                    "homelabctl.tui.client_interface_settings",
+                    return_value=settings,
+                ):
+                    app = NControlApp(Path(temp), auto_refresh=False)
+                    async with app.run_test(size=(120, 40)) as pilot:
+                        await pilot.press("w")
+                        await pilot.pause()
+                        app.screen.action_focus_next_table()
+                        await pilot.pause()
+                        await pilot.press("e")
+                        await pilot.pause()
+                        self.assertIsInstance(app.screen, ConnectWireGuardServerScreen)
+                        self.assertTrue(app.screen.editing)
+                        self.assertEqual(
+                            app.screen.query_one("#client-public-key", Input).value,
+                            "client-public-key",
+                        )
+                        self.assertEqual(
+                            app.screen.query_one("#client-endpoint", Input).value,
+                            "qnap.example.test:51820",
+                        )
+                        app.screen.dismiss(None)
 
             asyncio.run(scenario())
 

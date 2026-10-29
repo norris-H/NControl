@@ -46,14 +46,17 @@ from .wireguard_control import (
     add_connection,
     add_peer,
     adopt_connection,
+    client_interface_settings,
     connect,
     connection_status,
     create_server_interface,
+    create_client_interface,
     delete_client_interface,
     delete_connection,
     delete_server_interface,
     disconnect,
     edit_connection,
+    edit_client_interface,
     edit_server_interface,
     import_client_interface,
     import_peers,
@@ -340,7 +343,31 @@ class WebBackend:
             settings: dict[str, Any] = {}
             if definition.get("role") == "server":
                 try:
-                    settings = server_interface_settings(service, name)
+                    raw_settings = server_interface_settings(service, name)
+                    settings = {
+                        "interface": raw_settings["interface"],
+                        "address": raw_settings["address"],
+                        "addressPool": raw_settings["address_pool"],
+                        "listenPort": raw_settings["listen_port"],
+                        "publicEndpoint": raw_settings["public_endpoint"],
+                    }
+                except HomelabError:
+                    pass
+            elif definition.get("role") == "client":
+                try:
+                    raw_settings = client_interface_settings(service, name)
+                    settings = {
+                        "interface": raw_settings["interface"],
+                        "address": raw_settings["address"],
+                        "publicKey": raw_settings["public_key"],
+                        "peerPublicKey": raw_settings["peer_public_key"],
+                        "endpoint": raw_settings["endpoint"],
+                        "allowedIPs": raw_settings["allowed_ips"],
+                        "persistentKeepalive": raw_settings["persistent_keepalive"],
+                        "presharedKeyConfigured": raw_settings[
+                            "preshared_key_configured"
+                        ] == "true",
+                    }
                 except HomelabError:
                     pass
             interfaces.append(
@@ -435,6 +462,30 @@ class WebBackend:
                     str(body["addressPool"]),
                     int(body["listenPort"]),
                     str(body["publicEndpoint"]),
+                )
+            elif action == "create-client":
+                result, output = _capture(
+                    create_client_interface,
+                    service,
+                    str(body["interface"]),
+                    str(body["address"]),
+                    str(body["peerPublicKey"]),
+                    str(body["endpoint"]),
+                    str(body["allowedIPs"]),
+                    int(body.get("persistentKeepalive", 25)),
+                    str(body.get("presharedKey", "")),
+                )
+            elif action == "edit-client":
+                result, output = _capture(
+                    edit_client_interface,
+                    service,
+                    str(body["interface"]),
+                    str(body["address"]),
+                    str(body["peerPublicKey"]),
+                    str(body["endpoint"]),
+                    str(body["allowedIPs"]),
+                    int(body.get("persistentKeepalive", 25)),
+                    str(body.get("presharedKey", "")),
                 )
             elif action == "delete-server":
                 result, output = _capture(delete_server_interface, service, str(body["interface"]))

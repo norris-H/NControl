@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import subprocess
 import tempfile
 import unittest
@@ -16,11 +17,14 @@ from homelabctl.wireguard_control import (
     _sync_peer_route,
     add_connection,
     add_peer,
+    client_interface_settings,
     create_server_interface,
+    create_client_interface,
     delete_client_interface,
     delete_server_interface,
     delete_connection,
     edit_server_interface,
+    edit_client_interface,
     edit_connection,
     interface_addresses,
     interface_peer_networks,
@@ -84,6 +88,12 @@ PublicKey = existing-public
 AllowedIPs = 10.10.0.2/32
 PersistentKeepalive = 25
 """
+
+CLIENT_PRIVATE_KEY = base64.b64encode(bytes(range(32))).decode("ascii")
+CLIENT_PUBLIC_KEY = base64.b64encode(bytes(range(32, 64))).decode("ascii")
+REMOTE_PUBLIC_KEY = base64.b64encode(bytes(range(64, 96))).decode("ascii")
+NEW_REMOTE_PUBLIC_KEY = base64.b64encode(bytes(range(96, 128))).decode("ascii")
+PRESHARED_KEY = base64.b64encode(bytes(range(128, 160))).decode("ascii")
 
 
 class WireGuardControlTests(unittest.TestCase):
@@ -276,6 +286,106 @@ class WireGuardControlTests(unittest.TestCase):
         self.assertEqual(
             interface,
             {"name": "wg2", "role": "client", "config": "config/wg2.conf"},
+        )
+
+    def test_manual_client_creation_generates_public_key_and_settings(self):
+        service, directory = self._service()
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(argv, *, input_text=None, check=False):
+            values = tuple(argv)
+            calls.append(values)
+            if values == ("wg", "genkey"):
+                return subprocess.CompletedProcess(values, 0, CLIENT_PRIVATE_KEY + "\n", "")
+            if values == ("wg", "pubkey"):
+                self.assertEqual(input_text, CLIENT_PRIVATE_KEY + "\n")
+                return subprocess.CompletedProcess(values, 0, CLIENT_PUBLIC_KEY + "\n", "")
+            if values[-3:] == ("wg", "show", "wg2"):
+                return subprocess.CompletedProcess(values, 1, "", "not running")
+            return subprocess.CompletedProcess(values, 0, "", "")
+
+        with patch("homelabctl.wireguard_control._run", side_effect=fake_run):
+            public_key = create_client_interface(
+                service,
+                "wg2",
+                "192.168.7.2/32",
+                REMOTE_PUBLIC_KEY,
+                "qnap.example.test:51820",
+                "192.168.7.0/24, 10.20.0.0/24",
+                10,
+                PRESHARED_KEY,
+            )
+            reloaded = load_service(directory / "service.yaml")
+            settings = client_interface_settings(reloaded, "wg2")
+
+        self.assertEqual(public_key, CLIENT_PUBLIC_KEY)
+        self.assertEqual(settings["public_key"], CLIENT_PUBLIC_KEY)
+        self.assertEqual(settings["peer_public_key"], REMOTE_PUBLIC_KEY)
+        self.assertEqual(settings["endpoint"], "qnap.example.test:51820")
+        self.assertEqual(settings["allowed_ips"], "192.168.7.0/24, 10.20.0.0/24")
+        self.assertEqual(settings["preshared_key_configured"], "true")
+        config = (directory / "config" / "wg2.conf").read_text(encoding="utf-8")
+        self.assertIn(f"PrivateKey = {CLIENT_PRIVATE_KEY}", config)
+        self.assertIn(f"PresharedKey = {PRESHARED_KEY}", config)
+        self.assertIn("PersistentKeepalive = 10", config)
+        self.assertIn(
+            ("sudo", "-n", "wg-quick", "up", str(directory / "config" / "wg2.conf")),
+            calls,
+        )
+
+    def test_client_interface_can_be_edited_without_exposing_private_key(self):
+        service, directory = self._service()
+        config = directory / "config" / "wg1.conf"
+        config.write_text(
+            "[Interface]\n"
+            "Address = 192.168.7.2/32\n"
+            f"PrivateKey = {CLIENT_PRIVATE_KEY}\n\n"
+            "[Peer]\n"
+            f"PublicKey = {REMOTE_PUBLIC_KEY}\n"
+            f"PresharedKey = {PRESHARED_KEY}\n"
+            "Endpoint = old-qnap.example.test:51820\n"
+            "AllowedIPs = 192.168.7.0/24\n"
+            "PersistentKeepalive = 10\n",
+            encoding="utf-8",
+        )
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(argv, *, input_text=None, check=False):
+            values = tuple(argv)
+            calls.append(values)
+            if values == ("wg", "pubkey"):
+                return subprocess.CompletedProcess(values, 0, CLIENT_PUBLIC_KEY + "\n", "")
+            if values[-3:] == ("wg", "show", "wg1"):
+                return subprocess.CompletedProcess(values, 0, "", "")
+            return subprocess.CompletedProcess(values, 0, "", "")
+
+        with patch("homelabctl.wireguard_control._run", side_effect=fake_run):
+            edit_client_interface(
+                service,
+                "wg1",
+                "192.168.7.3/32",
+                NEW_REMOTE_PUBLIC_KEY,
+                "new-qnap.example.test:51821",
+                "192.168.7.0/24, 10.30.0.0/24",
+                25,
+                "-",
+            )
+            settings = client_interface_settings(service, "wg1")
+
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn("Address = 192.168.7.3/32", updated)
+        self.assertIn(f"PublicKey = {NEW_REMOTE_PUBLIC_KEY}", updated)
+        self.assertIn("Endpoint = new-qnap.example.test:51821", updated)
+        self.assertNotIn("PresharedKey", updated)
+        self.assertNotIn(CLIENT_PRIVATE_KEY, str(settings))
+        self.assertEqual(settings["public_key"], CLIENT_PUBLIC_KEY)
+        self.assertIn(
+            ("sudo", "-n", "wg-quick", "down", str(config)),
+            calls,
+        )
+        self.assertIn(
+            ("sudo", "-n", "wg-quick", "up", str(config)),
+            calls,
         )
 
     def test_edit_server_interface_restarts_and_updates_definition(self):

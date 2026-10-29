@@ -61,6 +61,7 @@ from .web_control import (
     stop as stop_web,
 )
 from .wireguard_control import (
+    client_interface_settings,
     interface_addresses,
     interface_peer_networks,
     list_peer_records,
@@ -417,61 +418,194 @@ class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
         background: $background 70%;
     }
     ConnectWireGuardServerScreen > Vertical {
-        width: 94;
+        width: 104;
         min-width: 72;
-        height: 32;
-        min-height: 24;
-        max-height: 92%;
+        height: 46;
+        min-height: 32;
+        max-height: 94%;
         padding: 1 2;
         border: thick $accent;
         background: $surface;
         overflow-y: auto;
     }
     ConnectWireGuardServerScreen .field-label { margin-top: 1; }
-    ConnectWireGuardServerScreen .form-note { color: $text-muted; height: 3; }
+    ConnectWireGuardServerScreen .form-note { color: $text-muted; height: 4; }
+    ConnectWireGuardServerScreen .client-fields { height: auto; }
     ConnectWireGuardServerScreen #client-actions { height: 3; margin-top: 1; }
     ConnectWireGuardServerScreen Button { width: 1fr; }
     """
 
-    def __init__(self, interface_name: str) -> None:
+    def __init__(
+        self,
+        defaults: dict[str, str],
+        *,
+        editing: bool = False,
+    ) -> None:
         super().__init__()
-        self.interface_name = interface_name
+        self.defaults = defaults
+        self.editing = editing
 
     def compose(self) -> ComposeResult:
         with Vertical():
-            yield Label("连接其他 WireGuard 服务端", id="connect-server-title")
             yield Label(
-                "先在另一台 NControl 添加客户端并导出 .conf，再把该文件复制到本机后从这里导入。",
+                "查看/编辑 WireGuard 客户端接口"
+                if self.editing
+                else "连接其他 WireGuard 服务端",
+                id="connect-server-title",
+            )
+            yield Label(
+                (
+                    "可直接查看并修改客户端参数；私钥不会显示，预共享密钥留空表示保持原值。"
+                    if self.editing
+                    else "威联通/QNAP 等不能导出 .conf 时选择手动填写；创建后会显示应登记到远端的 NControl 客户端公钥。"
+                ),
                 classes="form-note",
             )
+            yield Label("配置方式", classes="field-label")
+            yield Select(
+                [("手动填写服务端信息", "manual"), ("导入客户端 .conf", "file")],
+                value="manual",
+                allow_blank=False,
+                disabled=self.editing,
+                id="client-mode",
+            )
             yield Label("本机接口名称", classes="field-label")
-            yield Input(value=self.interface_name, id="client-interface")
-            yield Label("客户端配置文件路径", classes="field-label")
-            yield Input(placeholder="例如：/home/ubuntu/remote-client.conf", id="client-config")
+            yield Input(
+                value=self.defaults.get("interface", "wg1"),
+                disabled=self.editing,
+                id="client-interface",
+            )
+            with Vertical(id="import-fields", classes="client-fields"):
+                yield Label("客户端配置文件路径", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("source_config", ""),
+                    placeholder="例如：/home/ubuntu/remote-client.conf",
+                    id="client-config",
+                )
+            with Vertical(id="manual-fields", classes="client-fields"):
+                if self.editing:
+                    yield Label("NControl 客户端公钥（填写到威联通的公钥栏）", classes="field-label")
+                    yield Input(
+                        value=self.defaults.get("public_key", ""),
+                        disabled=True,
+                        id="client-public-key",
+                    )
+                yield Label("本机隧道地址（也是威联通 Peer 的允许 IP）", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("address", ""),
+                    placeholder="例如：192.168.7.2/32",
+                    id="client-address",
+                )
+                yield Label("远端服务端公钥", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("peer_public_key", ""),
+                    id="client-peer-public-key",
+                )
+                psk_state = (
+                    (
+                        "当前已配置"
+                        if self.defaults.get("preshared_key_configured") == "true"
+                        else "当前未配置"
+                    )
+                    + "；留空保持原值，输入 - 删除"
+                    if self.editing
+                    else "可选；需与威联通填写值一致"
+                )
+                yield Label(
+                    f"预共享密钥（{psk_state}）",
+                    classes="field-label",
+                )
+                yield Input(id="client-preshared-key")
+                yield Label("远端端点", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("endpoint", ""),
+                    placeholder="例如：vpn.example.com:51820",
+                    id="client-endpoint",
+                )
+                yield Label("通过远端访问的 IP/网段（多个用逗号分隔）", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("allowed_ips", ""),
+                    placeholder="例如：192.168.7.0/24",
+                    id="client-allowed-ips",
+                )
+                yield Label("永久保活（秒；0 表示关闭）", classes="field-label")
+                yield Input(
+                    value=self.defaults.get("persistent_keepalive", "25"),
+                    id="client-keepalive",
+                )
             with Horizontal(id="client-actions"):
                 yield Button("取消", id="cancel")
-                yield Button("导入并连接", variant="success", id="confirm")
+                yield Button(
+                    "保存并重启" if self.editing else "创建并连接",
+                    variant="success",
+                    id="confirm",
+                )
 
     def on_mount(self) -> None:
-        self.query_one("#client-config", Input).focus()
+        self._update_mode()
+        self.query_one("#client-address", Input).focus()
+
+    @on(Select.Changed, "#client-mode")
+    def on_mode_changed(self, _: Select.Changed) -> None:
+        self._update_mode()
+
+    def _update_mode(self) -> None:
+        mode = "manual" if self.editing else str(self.query_one("#client-mode", Select).value)
+        self.query_one("#manual-fields", Vertical).display = mode == "manual"
+        self.query_one("#import-fields", Vertical).display = mode == "file"
+        confirm = self.query_one("#confirm", Button)
+        confirm.label = (
+            "保存并重启" if self.editing else "导入并连接" if mode == "file" else "创建并连接"
+        )
 
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel":
             self.dismiss(None)
             return
+        mode = "manual" if self.editing else str(self.query_one("#client-mode", Select).value)
         result = {
+            "mode": mode,
             "interface": self.query_one("#client-interface", Input).value.strip(),
             "source_config": self.query_one("#client-config", Input).value.strip(),
+            "address": self.query_one("#client-address", Input).value.strip(),
+            "peer_public_key": self.query_one("#client-peer-public-key", Input).value.strip(),
+            "preshared_key": self.query_one("#client-preshared-key", Input).value.strip(),
+            "endpoint": self.query_one("#client-endpoint", Input).value.strip(),
+            "allowed_ips": self.query_one("#client-allowed-ips", Input).value.strip(),
+            "persistent_keepalive": self.query_one("#client-keepalive", Input).value.strip(),
         }
         if not result["interface"]:
             self.query_one("#client-interface", Input).focus()
             self.notify("请输入本机接口名称", severity="warning")
             return
-        if not result["source_config"]:
+        if mode == "file" and not result["source_config"]:
             self.query_one("#client-config", Input).focus()
             self.notify("请输入客户端配置文件路径", severity="warning")
             return
+        if mode == "manual" and not all(
+            result[field]
+            for field in (
+                "address",
+                "peer_public_key",
+                "endpoint",
+                "allowed_ips",
+                "persistent_keepalive",
+            )
+        ):
+            self.notify("请填写本机地址、服务端公钥、端点、允许网段和永久保活", severity="warning")
+            return
+        if mode == "manual":
+            try:
+                keepalive = int(result["persistent_keepalive"])
+            except ValueError:
+                self.query_one("#client-keepalive", Input).focus()
+                self.notify("永久保活必须是数字", severity="warning")
+                return
+            if not 0 <= keepalive <= 65535:
+                self.query_one("#client-keepalive", Input).focus()
+                self.notify("永久保活必须在 0-65535 秒之间", severity="warning")
+                return
         self.dismiss(result)
 
     def action_cancel(self) -> None:
@@ -1008,7 +1142,7 @@ class WireGuardManagerScreen(ModalScreen[None]):
                     interface_actions.insert(1, "Y 同步配置")
                 actions[0:0] = interface_actions
             elif selected.get("role") == "client":
-                actions.insert(0, "D 删除客户端")
+                actions[0:0] = ["E 查看/编辑客户端", "D 删除客户端"]
         elif kind == "peer":
             if selected.get("managed"):
                 actions[0:0] = ["E 导出配置", "V 二维码", "R 撤销客户端"]
@@ -1106,7 +1240,10 @@ class WireGuardManagerScreen(ModalScreen[None]):
     def action_edit_or_export(self) -> None:
         selected = self._selected()
         if selected and selected.get("kind") == "interface":
-            self.action_edit_server()
+            if selected.get("role") == "client":
+                self.action_edit_client()
+            else:
+                self.action_edit_server()
         elif selected and selected.get("kind") == "peer":
             self.action_export_peer()
         elif selected and selected.get("kind") == "connection":
@@ -1138,6 +1275,36 @@ class WireGuardManagerScreen(ModalScreen[None]):
             result["public_endpoint"],
             reload_rows=True,
             focus_after="#wg0-items",
+        )
+
+    def action_edit_client(self) -> None:
+        selected = self._selected("interface")
+        if not selected or selected.get("role") != "client":
+            return
+        try:
+            defaults = client_interface_settings(self.service, str(selected["name"]))
+        except HomelabError as exc:
+            self._write(f"[red]{escape(str(exc))}[/red]")
+            return
+        self.app.push_screen(
+            ConnectWireGuardServerScreen(defaults, editing=True),
+            self._edit_client_result,
+        )
+
+    def _edit_client_result(self, result: dict[str, str] | None) -> None:
+        if not result:
+            return
+        self.run_management(
+            "edit-client",
+            result["interface"],
+            result["address"],
+            result["peer_public_key"],
+            result["endpoint"],
+            result["allowed_ips"],
+            result["persistent_keepalive"],
+            result["preshared_key"],
+            reload_rows=True,
+            focus_after="#wg1-items",
         )
 
     def action_delete_or_disconnect(self) -> None:
@@ -1399,20 +1566,43 @@ class WireGuardManagerScreen(ModalScreen[None]):
         if active != "wg1-tab":
             return
         self.app.push_screen(
-            ConnectWireGuardServerScreen(self._next_interface_name()),
+            ConnectWireGuardServerScreen(
+                {
+                    "interface": self._next_interface_name(),
+                    "address": "",
+                    "peer_public_key": "",
+                    "endpoint": "",
+                    "allowed_ips": "",
+                    "persistent_keepalive": "25",
+                }
+            ),
             self._connect_server_result,
         )
 
     def _connect_server_result(self, result: dict[str, str] | None) -> None:
         if not result:
             return
-        self.run_management(
-            "import-client",
-            result["interface"],
-            result["source_config"],
-            reload_rows=True,
-            focus_after="#wg1-items",
-        )
+        if result["mode"] == "file":
+            self.run_management(
+                "import-client",
+                result["interface"],
+                result["source_config"],
+                reload_rows=True,
+                focus_after="#wg1-items",
+            )
+        else:
+            self.run_management(
+                "create-client",
+                result["interface"],
+                result["address"],
+                result["peer_public_key"],
+                result["endpoint"],
+                result["allowed_ips"],
+                result["persistent_keepalive"],
+                result["preshared_key"],
+                reload_rows=True,
+                focus_after="#wg1-items",
+            )
 
     def action_add_peer(self) -> None:
         interfaces = self.service.spec["wireguard"].get("interfaces", [])

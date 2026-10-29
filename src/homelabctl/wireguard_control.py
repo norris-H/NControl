@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import copy
 import hashlib
 import ipaddress
@@ -366,7 +368,7 @@ def adopt_connection(service: ServiceDefinition, name: str) -> None:
     print(f"网络连接 {name} 已接管，转换 {len(converted)} 条旧规则")
 
 
-def parse_wireguard_config(path: Path) -> tuple[dict[str, str], list[ParsedPeer]]:
+def _raw_wireguard_config(path: Path) -> tuple[dict[str, str], list[dict[str, str]]]:
     interface: dict[str, str] = {}
     peers: list[dict[str, str]] = []
     current: dict[str, str] | None = None
@@ -395,6 +397,11 @@ def parse_wireguard_config(path: Path) -> tuple[dict[str, str], list[ParsedPeer]
             interface[key] = value
         elif section == "peer" and current is not None:
             current[key] = value
+    return interface, peers
+
+
+def parse_wireguard_config(path: Path) -> tuple[dict[str, str], list[ParsedPeer]]:
+    interface, peers = _raw_wireguard_config(path)
     parsed: list[ParsedPeer] = []
     for peer in peers:
         public_key = peer.get("PublicKey")
@@ -411,6 +418,68 @@ def parse_wireguard_config(path: Path) -> tuple[dict[str, str], list[ParsedPeer]
             )
         )
     return interface, parsed
+
+
+def _validate_wireguard_key(value: str, label: str, *, optional: bool = False) -> str:
+    key = value.strip()
+    if optional and not key:
+        return ""
+    try:
+        decoded = base64.b64decode(key, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HomelabError(f"{label}不是有效的 WireGuard 密钥") from exc
+    if len(decoded) != 32:
+        raise HomelabError(f"{label}不是有效的 WireGuard 密钥")
+    return key
+
+
+def _validate_client_values(
+    address: str,
+    peer_public_key: str,
+    endpoint: str,
+    allowed_ips: str,
+    persistent_keepalive: int,
+    preshared_key: str = "",
+) -> tuple[str, str, str, str, int, str]:
+    try:
+        local_address = ipaddress.ip_interface(address.strip())
+    except ValueError as exc:
+        raise HomelabError("客户端地址必须包含有效掩码，例如 192.168.7.2/32") from exc
+    if local_address.version != 4:
+        raise HomelabError("目前只支持 IPv4 WireGuard 地址")
+    public_key = _validate_wireguard_key(peer_public_key, "服务端公钥")
+    endpoint_value = endpoint.strip()
+    host, separator, port_text = endpoint_value.rpartition(":")
+    if not separator or not host or not port_text.isdigit():
+        raise HomelabError("服务端端点格式应为 主机名或IP:端口")
+    port = int(port_text)
+    if not 1 <= port <= 65535:
+        raise HomelabError("服务端端口必须在 1-65535 之间")
+    networks: list[str] = []
+    for value in allowed_ips.split(","):
+        item = value.strip()
+        if not item:
+            continue
+        try:
+            network = ipaddress.ip_network(item, strict=False)
+        except ValueError as exc:
+            raise HomelabError(f"允许的 IP 格式无效: {item}") from exc
+        if network.version != 4:
+            raise HomelabError("目前只支持 IPv4 允许网段")
+        networks.append(str(network))
+    if not networks:
+        raise HomelabError("至少填写一个允许的 IP 或网段")
+    if not 0 <= persistent_keepalive <= 65535:
+        raise HomelabError("永久保活必须在 0-65535 秒之间")
+    psk = _validate_wireguard_key(preshared_key, "预共享密钥", optional=True)
+    return (
+        str(local_address),
+        public_key,
+        endpoint_value,
+        ", ".join(networks),
+        persistent_keepalive,
+        psk,
+    )
 
 
 def _service_path(service: ServiceDefinition, value: str) -> Path:
@@ -836,6 +905,93 @@ def import_client_interface(
         print("客户端接口已启动")
 
 
+def _public_key_from_private(private_key: str) -> str:
+    result = _run(("wg", "pubkey"), input_text=f"{private_key.strip()}\n", check=True)
+    public_key = result.stdout.strip()
+    if not public_key:
+        raise HomelabError("无法由客户端私钥计算公钥")
+    return public_key
+
+
+def create_client_interface(
+    service: ServiceDefinition,
+    interface_name: str,
+    address: str,
+    peer_public_key: str,
+    endpoint: str,
+    allowed_ips: str,
+    persistent_keepalive: int = 25,
+    preshared_key: str = "",
+) -> str:
+    """Create a portable client config when the remote server cannot export one."""
+    _validate_new_interface_name(service, interface_name)
+    (
+        local_address,
+        remote_public_key,
+        endpoint_value,
+        allowed_value,
+        keepalive,
+        psk,
+    ) = _validate_client_values(
+        address,
+        peer_public_key,
+        endpoint,
+        allowed_ips,
+        persistent_keepalive,
+        preshared_key,
+    )
+    private_key = _run(("wg", "genkey"), check=True).stdout.strip()
+    if not private_key:
+        raise HomelabError("WireGuard 客户端私钥生成失败")
+    public_key = _public_key_from_private(private_key)
+
+    config_value = f"config/{interface_name}.conf"
+    config_path = _service_path(service, config_value)
+    if config_path.exists():
+        raise HomelabError(f"目标配置已存在: {config_path}")
+    lines = [
+        "[Interface]",
+        f"Address = {local_address}",
+        f"PrivateKey = {private_key}",
+        "",
+        "[Peer]",
+        f"PublicKey = {remote_public_key}",
+    ]
+    if psk:
+        lines.append(f"PresharedKey = {psk}")
+    lines.extend(
+        [
+            f"Endpoint = {endpoint_value}",
+            f"AllowedIPs = {allowed_value}",
+            f"PersistentKeepalive = {keepalive}",
+            "",
+        ]
+    )
+    _atomic_write(config_path, "\n".join(lines))
+    try:
+        _append_interface(
+            service,
+            {"name": interface_name, "role": "client", "config": config_value},
+        )
+    except Exception:
+        config_path.unlink(missing_ok=True)
+        raise
+
+    start_error = _start_new_interface(service, interface_name, config_path)
+    print(f"已新建 WireGuard 客户端 {interface_name}: {local_address}")
+    print(f"NControl 客户端公钥: {public_key}")
+    print(f"请在远端服务端把该公钥登记为 Peer，允许的 IP 填 {local_address}")
+    print("由 NControl 主动连接时，远端 Peer 的端点通常留空")
+    print(f"永久保活已配置在 NControl 端: {keepalive} 秒")
+    if psk:
+        print("远端服务端的预共享密钥必须与本次填写值完全一致")
+    if start_error:
+        print(f"配置已保存，但接口启动失败: {start_error}")
+    else:
+        print("客户端接口已启动；远端登记完成后将开始握手")
+    return public_key
+
+
 def _connection_definition(
     service: ServiceDefinition,
     name: str,
@@ -1151,6 +1307,32 @@ def server_interface_settings(
     }
 
 
+def client_interface_settings(
+    service: ServiceDefinition,
+    interface_name: str,
+) -> dict[str, str]:
+    interface = _interface(service, interface_name)
+    if interface.get("role") != "client":
+        raise HomelabError(f"接口 {interface_name} 不是客户端接口")
+    config_path = _service_path(service, str(interface["config"]))
+    values, peers = _raw_wireguard_config(config_path)
+    if not peers:
+        raise HomelabError("客户端配置没有 Peer 段")
+    peer = peers[0]
+    private_key = values.get("PrivateKey", "")
+    public_key = _public_key_from_private(private_key) if private_key else ""
+    return {
+        "interface": interface_name,
+        "address": values.get("Address", ""),
+        "public_key": public_key,
+        "peer_public_key": peer.get("PublicKey", ""),
+        "endpoint": peer.get("Endpoint", ""),
+        "allowed_ips": peer.get("AllowedIPs", ""),
+        "persistent_keepalive": peer.get("PersistentKeepalive", "0"),
+        "preshared_key_configured": "true" if peer.get("PresharedKey") else "false",
+    }
+
+
 def _replace_config_setting(content: str, section: str, key: str, value: str) -> str:
     lines = content.splitlines()
     target = section.casefold()
@@ -1176,6 +1358,106 @@ def _replace_config_setting(content: str, section: str, key: str, value: str) ->
         raise HomelabError(f"WireGuard 配置缺少 [{section}] 段")
     lines.insert(insert_at, f"{key} = {value}")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _remove_config_setting(content: str, section: str, key: str) -> str:
+    lines = content.splitlines()
+    target = section.casefold()
+    active = False
+    for index, raw in enumerate(lines):
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if active:
+                break
+            active = stripped[1:-1].strip().casefold() == target
+            continue
+        if active:
+            name, separator, _ = stripped.partition("=")
+            if separator and name.strip().casefold() == key.casefold():
+                del lines[index]
+                break
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def edit_client_interface(
+    service: ServiceDefinition,
+    interface_name: str,
+    address: str,
+    peer_public_key: str,
+    endpoint: str,
+    allowed_ips: str,
+    persistent_keepalive: int,
+    preshared_key: str = "",
+) -> None:
+    interface = _interface(service, interface_name)
+    if interface.get("role") != "client":
+        raise HomelabError("只能编辑客户端接口")
+    (
+        local_address,
+        remote_public_key,
+        endpoint_value,
+        allowed_value,
+        keepalive,
+        _,
+    ) = _validate_client_values(
+        address,
+        peer_public_key,
+        endpoint,
+        allowed_ips,
+        persistent_keepalive,
+    )
+    psk_update = preshared_key.strip()
+    if psk_update not in {"", "-"}:
+        psk_update = _validate_wireguard_key(psk_update, "预共享密钥")
+
+    config_path = _service_path(service, str(interface["config"]))
+    original = config_path.read_text(encoding="utf-8")
+    values, peers = _raw_wireguard_config(config_path)
+    if not values.get("PrivateKey") or not peers:
+        raise HomelabError("客户端配置缺少私钥或 Peer 段")
+    updated = _replace_config_setting(original, "Interface", "Address", local_address)
+    updated = _replace_config_setting(updated, "Peer", "PublicKey", remote_public_key)
+    updated = _replace_config_setting(updated, "Peer", "Endpoint", endpoint_value)
+    updated = _replace_config_setting(updated, "Peer", "AllowedIPs", allowed_value)
+    updated = _replace_config_setting(
+        updated, "Peer", "PersistentKeepalive", str(keepalive)
+    )
+    if psk_update == "-":
+        updated = _remove_config_setting(updated, "Peer", "PresharedKey")
+    elif psk_update:
+        updated = _replace_config_setting(updated, "Peer", "PresharedKey", psk_update)
+
+    was_running = _wg_show(service, interface_name).returncode == 0
+    if was_running:
+        down = _run((*_sudo_prefix(service), "wg-quick", "down", str(config_path)))
+        if down.returncode != 0:
+            raise HomelabError(
+                "接口停止失败，未修改配置: "
+                + (down.stderr.strip() or down.stdout.strip() or str(down.returncode))
+            )
+    try:
+        _atomic_write(config_path, updated)
+        if was_running:
+            up = _run((*_sudo_prefix(service), "wg-quick", "up", str(config_path)))
+            if up.returncode != 0:
+                raise HomelabError(
+                    "新配置启动失败: "
+                    + (up.stderr.strip() or up.stdout.strip() or str(up.returncode))
+                )
+    except Exception as exc:
+        _atomic_write(config_path, original)
+        if was_running:
+            _run((*_sudo_prefix(service), "wg-quick", "up", str(config_path)))
+        if isinstance(exc, HomelabError):
+            raise HomelabError(f"编辑未生效，已恢复原配置: {exc}") from exc
+        raise
+
+    public_key = _public_key_from_private(values["PrivateKey"])
+    print(f"已更新 WireGuard 客户端 {interface_name}: {local_address}")
+    print(f"NControl 客户端公钥: {public_key}")
+    print(f"远端服务端 Peer 的允许 IP 应填写 {local_address}")
+    if was_running:
+        print("客户端接口已使用新配置重新启动")
 
 
 def _validate_server_values(
@@ -1808,6 +2090,15 @@ def _parser() -> argparse.ArgumentParser:
     edit_server.add_argument("address_pool")
     edit_server.add_argument("listen_port", type=int)
     edit_server.add_argument("public_endpoint")
+    for operation in ("create-client", "edit-client"):
+        client = sub.add_parser(operation)
+        client.add_argument("interface")
+        client.add_argument("address")
+        client.add_argument("peer_public_key")
+        client.add_argument("endpoint")
+        client.add_argument("allowed_ips")
+        client.add_argument("persistent_keepalive", type=int)
+        client.add_argument("preshared_key", nargs="?", default="")
     delete_server = sub.add_parser("delete-server")
     delete_server.add_argument("interface")
     delete_client = sub.add_parser("delete-client")
@@ -1894,6 +2185,28 @@ def main(argv: list[str] | None = None) -> int:
                 args.address_pool,
                 args.listen_port,
                 args.public_endpoint,
+            )
+        elif args.operation == "create-client":
+            create_client_interface(
+                service,
+                args.interface,
+                args.address,
+                args.peer_public_key,
+                args.endpoint,
+                args.allowed_ips,
+                args.persistent_keepalive,
+                args.preshared_key,
+            )
+        elif args.operation == "edit-client":
+            edit_client_interface(
+                service,
+                args.interface,
+                args.address,
+                args.peer_public_key,
+                args.endpoint,
+                args.allowed_ips,
+                args.persistent_keepalive,
+                args.preshared_key,
             )
         elif args.operation == "delete-server":
             delete_server_interface(service, args.interface)

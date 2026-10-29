@@ -106,6 +106,7 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px r
 .metric strong { display: block; margin-top: 4px; font-size: 12px; }
 .sub-list { margin: 12px 0; border-top: 1px solid var(--line-soft); }
 .sub-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.sub-row .muted { overflow-wrap: anywhere; word-break: break-word; }
 .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .system-grid .wide { grid-column: 1 / -1; }
 .result-list { display: grid; gap: 8px; padding: 18px 20px; }
@@ -116,7 +117,7 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px r
 .proxy-form > .muted { grid-column: 1 / -1; margin: 0; font-size: 12px; }
 .migration-actions { padding: 0 20px 20px; }
 .migration-actions input { min-width: min(320px, 100%); flex: 1; }
-dialog { width: min(620px, calc(100vw - 30px)); padding: 0; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--surface); box-shadow: 0 35px 120px rgba(0,0,0,.6); }
+dialog { width: min(760px, calc(100vw - 30px)); padding: 0; border: 1px solid var(--line); border-radius: 18px; color: var(--text); background: var(--surface); box-shadow: 0 35px 120px rgba(0,0,0,.6); }
 dialog::backdrop { background: rgba(2,5,8,.72); backdrop-filter: blur(5px); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 20px 22px; border-bottom: 1px solid var(--line-soft); }
 .modal-content { display: grid; gap: 14px; max-height: 62vh; overflow: auto; padding: 20px 22px; }

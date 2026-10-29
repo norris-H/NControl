@@ -155,6 +155,16 @@ def build_parser() -> argparse.ArgumentParser:
     edit_server.add_argument("address_pool")
     edit_server.add_argument("listen_port", type=int)
     edit_server.add_argument("public_endpoint")
+    for command_name in ("create-client", "edit-client"):
+        client = wireguard_sub.add_parser(command_name)
+        client.add_argument("service")
+        client.add_argument("interface")
+        client.add_argument("address")
+        client.add_argument("peer_public_key")
+        client.add_argument("endpoint")
+        client.add_argument("allowed_ips")
+        client.add_argument("persistent_keepalive", type=int)
+        client.add_argument("preshared_key", nargs="?", default="")
     delete_server = wireguard_sub.add_parser("delete-server")
     delete_server.add_argument("service")
     delete_server.add_argument("interface")
@@ -473,6 +483,17 @@ def run(args: argparse.Namespace) -> int:
                 args.address_pool,
                 str(args.listen_port),
                 args.public_endpoint,
+            )
+        elif command in {"create-client", "edit-client"}:
+            operation = (
+                command,
+                args.interface,
+                args.address,
+                args.peer_public_key,
+                args.endpoint,
+                args.allowed_ips,
+                str(args.persistent_keepalive),
+                args.preshared_key,
             )
         elif command == "delete-server":
             operation = ("delete-server", args.interface)
