@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import yaml
-from textual.widgets import Button, DataTable, Input, RichLog, Static
+from textual.widgets import Button, DataTable, Input, RichLog, Static, TextArea
 
 from homelabctl.errors import HomelabError
 from homelabctl.tui import (
@@ -23,6 +23,7 @@ from homelabctl.tui import (
     StopConfirmScreen,
     WebManagerScreen,
     WireGuardManagerScreen,
+    WireGuardClientReadyScreen,
     WireGuardConnectionScreen,
     WireGuardQrScreen,
 )
@@ -521,14 +522,42 @@ spec:
                         self.assertIsInstance(app.screen, ConnectWireGuardServerScreen)
                         self.assertTrue(app.screen.editing)
                         self.assertEqual(
-                            app.screen.query_one("#client-public-key", Input).value,
+                            app.screen.query_one("#client-public-key", TextArea).text,
                             "client-public-key",
                         )
                         self.assertEqual(
                             app.screen.query_one("#client-endpoint", Input).value,
                             "qnap.example.test:51820",
                         )
+                        app.screen.query_one("#copy-client-public-key", Button).press()
+                        await pilot.pause()
+                        self.assertEqual(app._clipboard, "client-public-key")
                         app.screen.dismiss(None)
+
+            asyncio.run(scenario())
+
+    def test_wireguard_client_ready_screen_copies_public_key(self):
+        with tempfile.TemporaryDirectory() as temp:
+            async def scenario() -> None:
+                app = NControlApp(Path(temp), auto_refresh=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    app.push_screen(
+                        WireGuardClientReadyScreen(
+                            "wg1",
+                            "client-public-key",
+                            "192.168.7.2/32",
+                        )
+                    )
+                    await pilot.pause()
+                    self.assertIsInstance(app.screen, WireGuardClientReadyScreen)
+                    self.assertIn(
+                        "允许的 IP: 192.168.7.2/32",
+                        app.screen.query_one("#client-ready-details", TextArea).text,
+                    )
+                    app.screen.query_one("#copy-client-public-key", Button).press()
+                    await pilot.pause()
+                    self.assertEqual(app._clipboard, "client-public-key")
+                    app.screen.dismiss(None)
 
             asyncio.run(scenario())
 

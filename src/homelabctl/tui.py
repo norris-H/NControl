@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -29,6 +30,7 @@ from textual.widgets import (
     Static,
     TabbedContent,
     TabPane,
+    TextArea,
 )
 
 from .config import load_all, load_service
@@ -409,6 +411,84 @@ class CreateWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
         self.dismiss(None)
 
 
+class WireGuardClientReadyScreen(ModalScreen[None]):
+    BINDINGS = [
+        Binding("escape", "close", "返回"),
+        Binding("q", "close", "返回"),
+    ]
+
+    CSS = """
+    WireGuardClientReadyScreen {
+        align: center middle;
+        background: $background 70%;
+    }
+    WireGuardClientReadyScreen > Vertical {
+        width: 92;
+        height: 23;
+        max-height: 90%;
+        padding: 1 2;
+        border: thick $success;
+        background: $surface;
+    }
+    WireGuardClientReadyScreen #client-ready-details {
+        height: 10;
+        margin: 1 0;
+    }
+    WireGuardClientReadyScreen #client-ready-note {
+        height: 3;
+        color: $text-muted;
+    }
+    WireGuardClientReadyScreen #client-ready-actions { height: 3; }
+    WireGuardClientReadyScreen Button { width: 1fr; }
+    """
+
+    def __init__(self, interface: str, public_key: str, address: str) -> None:
+        super().__init__()
+        self.interface = interface
+        self.public_key = public_key
+        self.address = address
+
+    def compose(self) -> ComposeResult:
+        details = "\n".join(
+            [
+                f"对等名称: {self.interface}",
+                f"公钥: {self.public_key}",
+                f"允许的 IP: {self.address}",
+                "端点: 通常留空（由 NControl 主动连接）",
+            ]
+        )
+        with Vertical():
+            yield Label("客户端已创建 · 请登记到威联通/QNAP")
+            yield TextArea(
+                details,
+                read_only=True,
+                soft_wrap=True,
+                show_line_numbers=False,
+                id="client-ready-details",
+            )
+            yield Label(
+                "“复制公钥”使用终端剪贴板；若 SSH 客户端拦截剪贴板协议，也可以在上方框内选择文本。",
+                id="client-ready-note",
+            )
+            with Horizontal(id="client-ready-actions"):
+                yield Button("复制公钥", variant="primary", id="copy-client-public-key")
+                yield Button("完成", variant="success", id="close")
+
+    def on_mount(self) -> None:
+        self.query_one("#copy-client-public-key", Button).focus()
+
+    @on(Button.Pressed)
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy-client-public-key":
+            self.app.copy_to_clipboard(self.public_key)
+            self.notify("客户端公钥已复制")
+        elif event.button.id == "close":
+            self.dismiss(None)
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
     BINDINGS = [Binding("escape", "cancel", "取消")]
 
@@ -431,6 +511,7 @@ class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
     ConnectWireGuardServerScreen .field-label { margin-top: 1; }
     ConnectWireGuardServerScreen .form-note { color: $text-muted; height: 4; }
     ConnectWireGuardServerScreen .client-fields { height: auto; }
+    ConnectWireGuardServerScreen #client-public-key { height: 3; }
     ConnectWireGuardServerScreen #client-actions { height: 3; margin-top: 1; }
     ConnectWireGuardServerScreen Button { width: 1fr; }
     """
@@ -485,9 +566,11 @@ class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
             with Vertical(id="manual-fields", classes="client-fields"):
                 if self.editing:
                     yield Label("NControl 客户端公钥（填写到威联通的公钥栏）", classes="field-label")
-                    yield Input(
-                        value=self.defaults.get("public_key", ""),
-                        disabled=True,
+                    yield TextArea(
+                        self.defaults.get("public_key", ""),
+                        read_only=True,
+                        soft_wrap=True,
+                        show_line_numbers=False,
                         id="client-public-key",
                     )
                 yield Label("本机隧道地址（也是威联通 Peer 的允许 IP）", classes="field-label")
@@ -534,6 +617,8 @@ class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
                     id="client-keepalive",
                 )
             with Horizontal(id="client-actions"):
+                if self.editing:
+                    yield Button("复制客户端公钥", variant="primary", id="copy-client-public-key")
                 yield Button("取消", id="cancel")
                 yield Button(
                     "保存并重启" if self.editing else "创建并连接",
@@ -560,6 +645,12 @@ class ConnectWireGuardServerScreen(ModalScreen[dict[str, str] | None]):
 
     @on(Button.Pressed)
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy-client-public-key":
+            public_key = self.defaults.get("public_key", "")
+            if public_key:
+                self.app.copy_to_clipboard(public_key)
+                self.notify("客户端公钥已复制")
+            return
         if event.button.id == "cancel":
             self.dismiss(None)
             return
@@ -1761,6 +1852,16 @@ class WireGuardManagerScreen(ModalScreen[None]):
             self._reload_rows()
             if focus_after:
                 self._focus_table(focus_after)
+        if operation == "create-client" and code == 0 and output:
+            match = re.search(r"^NControl 客户端公钥:\s*(\S+)", output, re.MULTILINE)
+            if match and len(arguments) >= 2:
+                self.app.push_screen(
+                    WireGuardClientReadyScreen(
+                        arguments[0],
+                        match.group(1),
+                        arguments[1],
+                    )
+                )
         self.refresh_interface_statuses()
         self.refresh_connection_statuses()
 
