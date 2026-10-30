@@ -109,6 +109,18 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px r
 .sub-row .muted { overflow-wrap: anywhere; word-break: break-word; }
 .system-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .system-grid .wide { grid-column: 1 / -1; }
+.host-name { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.host-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 16px 20px; }
+.host-metric { min-width: 0; padding: 13px 14px; border: 1px solid var(--line-soft); border-radius: 12px; background: rgba(8,11,15,.5); }
+.host-metric span { display: block; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.host-metric strong { display: block; margin-top: 7px; font-size: 19px; overflow-wrap: anywhere; }
+.host-metric small { display: block; min-height: 16px; margin-top: 5px; color: var(--muted); font-size: 10px; }
+.meter { height: 4px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: #26313d; }
+.meter > i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .3s ease; }
+.meter.warning > i { background: var(--warning); }
+.meter.danger > i { background: var(--danger); }
+.host-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0 20px 18px; color: var(--muted); font-size: 11px; }
+.host-meta b { color: var(--text); font-weight: 600; }
 .result-list { display: grid; gap: 8px; padding: 18px 20px; }
 .proxy-state { color: var(--muted); font-size: 12px; }
 .proxy-state.enabled { color: var(--accent); }
@@ -145,6 +157,7 @@ dialog::backdrop { background: rgba(2,5,8,.72); backdrop-filter: blur(5px); }
   .nav-item span { font-size: 18px; }
   .sidebar-foot { display: none; }
   .dashboard-grid { grid-template-columns: 240px 1fr; }
+  .host-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .app-shell { display: block; }
@@ -161,6 +174,7 @@ dialog::backdrop { background: rgba(2,5,8,.72); backdrop-filter: blur(5px); }
   .services-panel { max-height: 340px; overflow: auto; }
   .detail-meta, .system-grid { grid-template-columns: 1fr; }
   .system-grid .wide { grid-column: auto; }
+  .host-metrics { grid-template-columns: 1fr; }
   .proxy-form { grid-template-columns: 1fr; }
   .proxy-form > .muted { grid-column: auto; }
 }

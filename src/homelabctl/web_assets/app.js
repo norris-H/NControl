@@ -74,6 +74,56 @@ function formatRate(value) {
   return `${formatBytes(Math.max(0, value || 0))}/s`;
 }
 
+function formatDuration(value) {
+  let seconds = Math.max(0, Math.floor(Number(value || 0)));
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `${days} 天 ${hours} 小时`;
+  if (hours) return `${hours} 小时 ${minutes} 分钟`;
+  return `${minutes} 分钟`;
+}
+
+function hostMetric(label, value, detail, percent = null, warning = 70, danger = 90) {
+  const amount = percent === null ? null : Math.max(0, Math.min(100, Number(percent || 0)));
+  const meterState = amount === null ? "" : amount >= danger ? " danger" : amount >= warning ? " warning" : "";
+  return `<div class="host-metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail || "")}</small>${amount === null ? "" : `<div class="meter${meterState}"><i style="width:${amount}%"></i></div>`}</div>`;
+}
+
+function renderSystemInfo() {
+  const system = state.dashboard?.system;
+  if (!system) return;
+  const cpu = system.cpu || {};
+  const temperature = cpu.temperature || {};
+  const memory = system.memory || {};
+  const disk = system.disk || {};
+  const network = system.network || {};
+  const host = system.host || {};
+  const cores = `${cpu.physicalCores ?? "?"} 核 / ${cpu.logicalCores ?? "?"} 线程`;
+  const frequency = cpu.frequencyMHz ? `${Math.round(cpu.frequencyMHz)} MHz` : "频率不可用";
+  const load = [cpu.load1, cpu.load5, cpu.load15].map((value) => value ?? "-").join(" / ");
+  const temperatureText = temperature.available ? `${Number(temperature.celsius).toFixed(1)} °C` : "不可用";
+  const temperatureDetail = temperature.available ? `传感器：${temperature.source || "CPU"}` : "虚拟机可能不提供温度传感器";
+  $("#system-hostname").textContent = host.hostname || "未知主机";
+  $("#host-metrics").innerHTML = [
+    hostMetric("CPU 使用率", `${Number(cpu.percent || 0).toFixed(1)}%`, `${cores} · ${frequency}`, cpu.percent),
+    hostMetric("CPU 温度", temperatureText, temperatureDetail, temperature.available ? temperature.celsius : null, 70, 85),
+    hostMetric("内存", `${Number(memory.percent || 0).toFixed(1)}%`, `${formatBytes(memory.used)} / ${formatBytes(memory.total)}`, memory.percent),
+    hostMetric("项目所在磁盘", `${Number(disk.percent || 0).toFixed(1)}%`, `${formatBytes(disk.used)} / ${formatBytes(disk.total)}`, disk.percent),
+    hostMetric("系统负载", load, "最近 1 / 5 / 15 分钟"),
+    hostMetric("运行时间", formatDuration(system.uptimeSeconds), "自本次系统启动"),
+    hostMetric("网络接收", formatBytes(network.received), "本次系统启动后累计"),
+    hostMetric("网络发送", formatBytes(network.sent), "本次系统启动后累计"),
+  ].join("");
+  $("#host-meta").innerHTML = [
+    `<span>系统 <b>${escapeHtml(`${host.system || "未知"} ${host.release || ""}`.trim())}</b></span>`,
+    `<span>架构 <b>${escapeHtml(host.architecture || "未知")}</b></span>`,
+    `<span>磁盘路径 <b>${escapeHtml(disk.path || "未知")}</b></span>`,
+    `<span>交换空间 <b>${escapeHtml(`${Number(memory.swapPercent || 0).toFixed(1)}% · ${formatBytes(memory.swapUsed)} / ${formatBytes(memory.swapTotal)}`)}</b></span>`,
+  ].join("");
+}
+
 function calculateWireGuardRates(previous, current) {
   const elapsed = Math.max(0.001, Number(current.sampledAt || 0) - Number(previous?.sampledAt || 0));
   const previousInterfaces = new Map((previous?.interfaces || []).map((item) => [item.name, item.runtime || {}]));
@@ -124,6 +174,7 @@ function summaryCard(label, value) {
 
 function renderDashboard() {
   const services = state.dashboard?.services || [];
+  renderSystemInfo();
   const totals = { healthy: 0, starting: 0, unhealthy: 0, stopped: 0 };
   services.forEach((service) => { totals[service.health?.state] = (totals[service.health?.state] || 0) + 1; });
   $("#summary-grid").innerHTML = [

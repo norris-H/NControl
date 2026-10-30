@@ -40,6 +40,7 @@ from .proxy_control import disable as disable_proxy
 from .proxy_control import load_settings as load_proxy_settings
 from .proxy_control import save_settings as save_proxy_settings
 from .security import check_config_paths
+from .system_info import system_snapshot
 from .updates import apply_update, check_for_updates
 from .web_control import load_config, read_token, status_dict
 from .wireguard_control import (
@@ -156,6 +157,7 @@ class WebBackend:
             )
         return {
             "services": services,
+            "system": system_snapshot(self.root),
             "web": status_dict(self.root),
             "csrf": "",
             "timestamp": time.time(),

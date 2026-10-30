@@ -154,6 +154,11 @@ class WebControlTests(unittest.TestCase):
             dashboard = backend.dashboard()
             self.assertEqual(dashboard["services"][0]["name"], "demo")
             self.assertEqual(dashboard["services"][0]["health"]["state"], "stopped")
+            self.assertIn("cpu", dashboard["system"])
+            self.assertIn("temperature", dashboard["system"]["cpu"])
+            self.assertIn("memory", dashboard["system"])
+            self.assertIn("disk", dashboard["system"])
+            self.assertGreater(dashboard["system"]["memory"]["total"], 0)
             self.assertIn("web log ready", backend.logs("demo")["output"])
             result = backend.service_action(
                 "demo", {"action": "set-autostart", "enabled": True}
